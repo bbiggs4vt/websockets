@@ -8,110 +8,15 @@
 #include <iostream>
 #include <thread>
 
-#include <boost/asio/ip/tcp.hpp>
-#include <boost/beast/core.hpp>
-#include <boost/beast/websocket.hpp>
-
+#include "test_helpers.h"
 #include "websocket/CWebsocketClient.h"
-
-namespace
-{
-
-namespace beast = boost::beast;
-namespace websocket = boost::beast::websocket;
-namespace net = boost::asio;
-using tcp = net::ip::tcp;
-
-int gFailures = 0;
-
-void Check(bool condition, const std::string& what)
-{
-	if (condition)
-	{
-		std::cout << "PASS: " << what << "\n";
-	}
-	else
-	{
-		std::cerr << "FAIL: " << what << "\n";
-		++gFailures;
-	}
-}
-
-/// Accepts one websocket connection and echoes frames (preserving text/binary)
-/// until the peer closes.
-class CEchoServer
-{
-  public:
-	CEchoServer()
-		: mAcceptor(mIoc, tcp::endpoint(tcp::v4(), 0))
-	{
-		mPort = mAcceptor.local_endpoint().port();
-		mThread = std::thread([this]() { Run(); });
-	}
-
-	~CEchoServer()
-	{
-		if (mThread.joinable())
-		{
-			mThread.join();
-		}
-	}
-
-	uint16_t Port() const
-	{
-		return mPort;
-	}
-
-  private:
-	void Run()
-	{
-		try
-		{
-			tcp::socket socket(mIoc);
-			mAcceptor.accept(socket);
-			websocket::stream<tcp::socket> ws(std::move(socket));
-			ws.accept();
-			beast::flat_buffer buffer;
-			for (;;)
-			{
-				beast::error_code ec;
-				ws.read(buffer, ec);
-				if (ec == websocket::error::closed)
-				{
-					break;
-				}
-				if (ec)
-				{
-					std::cerr << "echo server read error: " << ec.message() << "\n";
-					break;
-				}
-				ws.text(ws.got_text());
-				ws.write(buffer.data());
-				buffer.consume(buffer.size());
-			}
-		}
-		catch (const std::exception& e)
-		{
-			std::cerr << "echo server exception: " << e.what() << "\n";
-		}
-	}
-
-	net::io_context mIoc;
-	tcp::acceptor mAcceptor;
-	uint16_t mPort = 0;
-	std::thread mThread;
-};
-
-template <class T>
-bool WaitFor(std::future<T>& future)
-{
-	return future.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
-}
-
-} // namespace
 
 int main()
 {
+	using testhelpers::CEchoServer;
+	using testhelpers::Check;
+	using testhelpers::gFailures;
+	using testhelpers::WaitFor;
 	using websocketclient::CWebsocketClient;
 
 	// --- happy path: connect, echo text + binary, close ---

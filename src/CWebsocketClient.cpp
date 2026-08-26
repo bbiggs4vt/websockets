@@ -627,7 +627,11 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 			mSession = session;
 		}
 		std::weak_ptr<CImpl> weakSelf = shared_from_this();
-		session->AsyncConnect(host, port, resource, [weakSelf, session, onComplete](bool success) {
+		// The handler is stored inside the session itself, so it must not
+		// capture the session strongly or the session would leak if the
+		// client shuts down before the connect completes
+		std::weak_ptr<ISession> weakSession = session;
+		session->AsyncConnect(host, port, resource, [weakSelf, weakSession, onComplete](bool success) {
 			if (auto self = weakSelf.lock())
 			{
 				if (success)
@@ -637,7 +641,7 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 				else
 				{
 					std::lock_guard<std::mutex> lock(self->mSessionMutex);
-					if (self->mSession == session)
+					if (!self->mSession.owner_before(weakSession) && !weakSession.owner_before(self->mSession))
 					{
 						self->mSession.reset();
 					}

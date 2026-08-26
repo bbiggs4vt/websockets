@@ -20,6 +20,8 @@ include/core/errorlogger/CLogger.h     Minimal logger used for error reporting
 src/                                   Implementation (Boost.Beast, pimpl)
 examples/echo_client.cpp               Small demo program
 tests/websocketclient_test.cpp         Loopback echo-server test
+tests/websocketclient_stress_test.cpp  Concurrency + lifecycle stress tests
+tests/test_helpers.h                   Shared test servers (echo + silent)
 ```
 
 ## Building
@@ -29,7 +31,21 @@ Requires CMake ≥ 3.16, a C++17 compiler, Boost ≥ 1.71 (headers), and OpenSSL
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-ctest --test-dir build --output-on-failure   # run the loopback test
+ctest --test-dir build --output-on-failure   # run the tests
+```
+
+The stress suite (`websocketclient_stress_test`) covers concurrent sends from
+many threads, Send/Close races, client destruction while sends are queued,
+while a connect is in progress, and while callbacks are executing, plus
+close-during-connect, bounded synchronous-connect timeouts, reconnect cycles,
+and throwing callbacks. It runs clean under ThreadSanitizer and
+AddressSanitizer/LeakSanitizer/UBSan, e.g.:
+
+```sh
+cmake -S . -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      -DCMAKE_CXX_FLAGS="-fsanitize=thread -g" \
+      -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
+cmake --build build-tsan -j && ctest --test-dir build-tsan --output-on-failure
 ```
 
 ## Usage
