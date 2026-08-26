@@ -1,0 +1,206 @@
+/// Loopback test for CWebsocketClient: spins up a minimal Beast echo server on
+/// an ephemeral port, then exercises connect, text/binary send + receive,
+/// callbacks, Close(), and failed-connect handling.
+
+#include <chrono>
+#include <cstdlib>
+#include <future>
+#include <iostream>
+#include <thread>
+
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/beast/core.hpp>
+#include <boost/beast/websocket.hpp>
+
+#include "websocket/CWebsocketClient.h"
+
+namespace
+{
+
+namespace beast = boost::beast;
+namespace websocket = boost::beast::websocket;
+namespace net = boost::asio;
+using tcp = net::ip::tcp;
+
+int gFailures = 0;
+
+void Check(bool condition, const std::string& what)
+{
+	if (condition)
+	{
+		std::cout << "PASS: " << what << "\n";
+	}
+	else
+	{
+		std::cerr << "FAIL: " << what << "\n";
+		++gFailures;
+	}
+}
+
+/// Accepts one websocket connection and echoes frames (preserving text/binary)
+/// until the peer closes.
+class CEchoServer
+{
+  public:
+	CEchoServer()
+		: mAcceptor(mIoc, tcp::endpoint(tcp::v4(), 0))
+	{
+		mPort = mAcceptor.local_endpoint().port();
+		mThread = std::thread([this]() { Run(); });
+	}
+
+	~CEchoServer()
+	{
+		if (mThread.joinable())
+		{
+			mThread.join();
+		}
+	}
+
+	uint16_t Port() const
+	{
+		return mPort;
+	}
+
+  private:
+	void Run()
+	{
+		try
+		{
+			tcp::socket socket(mIoc);
+			mAcceptor.accept(socket);
+			websocket::stream<tcp::socket> ws(std::move(socket));
+			ws.accept();
+			beast::flat_buffer buffer;
+			for (;;)
+			{
+				beast::error_code ec;
+				ws.read(buffer, ec);
+				if (ec == websocket::error::closed)
+				{
+					break;
+				}
+				if (ec)
+				{
+					std::cerr << "echo server read error: " << ec.message() << "\n";
+					break;
+				}
+				ws.text(ws.got_text());
+				ws.write(buffer.data());
+				buffer.consume(buffer.size());
+			}
+		}
+		catch (const std::exception& e)
+		{
+			std::cerr << "echo server exception: " << e.what() << "\n";
+		}
+	}
+
+	net::io_context mIoc;
+	tcp::acceptor mAcceptor;
+	uint16_t mPort = 0;
+	std::thread mThread;
+};
+
+template <class T>
+bool WaitFor(std::future<T>& future)
+{
+	return future.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+}
+
+} // namespace
+
+int main()
+{
+	using websocketclient::CWebsocketClient;
+
+	// --- happy path: connect, echo text + binary, close ---
+	{
+		CEchoServer server;
+
+		CWebsocketClient::CClientSettings settings;
+		settings.handshakeTimeoutS = 5;
+		settings.idleTimeoutS = 10;
+		CWebsocketClient client("test_client", settings);
+
+		std::promise<void> connected;
+		std::promise<std::string> echoedText;
+		std::promise<std::vector<uint8_t>> echoedContent;
+		std::promise<void> disconnected;
+
+		client.RegisterConnectCallback([&connected]() { connected.set_value(); });
+		client.RegisterMessageCallback([&echoedText](const std::string& m) { echoedText.set_value(m); });
+		client.RegisterContentCallback(
+			[&echoedContent](const std::vector<uint8_t>& c) { echoedContent.set_value(c); });
+		client.RegisterDisconnectCallback([&disconnected]() { disconnected.set_value(); });
+
+		Check(!client.IsConnected(), "not connected before Connect");
+		Check(client.Connect("127.0.0.1", server.Port(), "/"), "Connect succeeds");
+		Check(client.IsConnected(), "IsConnected after Connect");
+
+		auto connectedFuture = connected.get_future();
+		Check(WaitFor(connectedFuture), "connect callback fired");
+
+		client.SendMessage("hello websocket");
+		auto textFuture = echoedText.get_future();
+		Check(WaitFor(textFuture) && textFuture.get() == "hello websocket", "text payload echoed");
+
+		const std::vector<uint8_t> payload{0x00, 0x01, 0xFE, 0xFF, 0x42};
+		client.SendContent(std::make_shared<std::vector<uint8_t>>(payload));
+		auto contentFuture = echoedContent.get_future();
+		Check(WaitFor(contentFuture) && contentFuture.get() == payload, "binary payload echoed");
+
+		client.Close();
+		client.Close(); // may be called multiple times
+		auto disconnectedFuture = disconnected.get_future();
+		Check(WaitFor(disconnectedFuture), "disconnect callback fired");
+		Check(!client.IsConnected(), "not connected after Close");
+	}
+
+	// --- failed connect: nothing listening ---
+	{
+		CWebsocketClient::CClientSettings settings;
+		settings.handshakeTimeoutS = 3;
+		CWebsocketClient client("test_client_fail", settings);
+		Check(!client.Connect("127.0.0.1", 1, "/"), "Connect to closed port fails");
+		Check(!client.IsConnected(), "not connected after failed Connect");
+	}
+
+	// --- async connect + SendContent(const vector&) overload ---
+	{
+		CEchoServer server;
+
+		CWebsocketClient::CClientSettings settings;
+		settings.handshakeTimeoutS = 5;
+		CWebsocketClient client("test_client_async", settings);
+
+		std::promise<void> connected;
+		std::promise<std::vector<uint8_t>> echoedContent;
+		std::promise<void> disconnected;
+		client.RegisterConnectCallback([&connected]() { connected.set_value(); });
+		client.RegisterContentCallback(
+			[&echoedContent](const std::vector<uint8_t>& c) { echoedContent.set_value(c); });
+		client.RegisterDisconnectCallback([&disconnected]() { disconnected.set_value(); });
+
+		client.AsyncConnect("127.0.0.1", server.Port(), "/");
+		auto connectedFuture = connected.get_future();
+		Check(WaitFor(connectedFuture), "AsyncConnect fired connect callback");
+
+		const std::vector<uint8_t> payload{1, 2, 3};
+		client.SendContent(payload);
+		auto contentFuture = echoedContent.get_future();
+		Check(WaitFor(contentFuture) && contentFuture.get() == payload, "binary payload echoed (copy overload)");
+
+		client.Close();
+		auto disconnectedFuture = disconnected.get_future();
+		Check(WaitFor(disconnectedFuture), "clean close before destruction");
+	}
+
+	if (gFailures == 0)
+	{
+		std::cout << "\nAll tests passed\n";
+		return EXIT_SUCCESS;
+	}
+	std::cerr << "\n" << gFailures << " test(s) failed\n";
+	return EXIT_FAILURE;
+}
