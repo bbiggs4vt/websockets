@@ -466,9 +466,10 @@ BOOST_AUTO_TEST_CASE(RemoveClientAndStopCallbackThreads, *utf::timeout(60))
 	};
 	server.Start(static_cast<unsigned short>(0), callbacks);
 
+	// The promise must outlive the clients whose callbacks reference it
+	std::promise<void> aDisconnected;
 	CWebsocketClient clientA("rm_client_a", ClientSettings());
 	CWebsocketClient clientB("rm_client_b", ClientSettings());
-	std::promise<void> aDisconnected;
 	clientA.RegisterDisconnectCallback([&]() { aDisconnected.set_value(); });
 	BOOST_REQUIRE(clientA.Connect("127.0.0.1", server.Port(), "/"));
 	BOOST_REQUIRE(clientB.Connect("127.0.0.1", server.Port(), "/"));
@@ -484,8 +485,9 @@ BOOST_AUTO_TEST_CASE(RemoveClientAndStopCallbackThreads, *utf::timeout(60))
 		BOOST_CHECK_EQUAL(closedEvents[0].first, removedId);
 		BOOST_CHECK(closedEvents[0].second == std::this_thread::get_id());
 	}
+	// clientA connected first, so the lowest id is clientA's: it observes the disconnect
 	auto aDisconnectedFuture = aDisconnected.get_future();
-	// The removed client observes the disconnect (whichever client was first)
+	BOOST_CHECK_MESSAGE(WaitFor(aDisconnectedFuture), "removed client saw the disconnect");
 	BOOST_CHECK(PollUntil([&]() { return server.GetConnectedClientIds().size() == 1; }));
 
 	// Stop: remaining closed callback also runs in the calling thread
@@ -495,7 +497,6 @@ BOOST_AUTO_TEST_CASE(RemoveClientAndStopCallbackThreads, *utf::timeout(60))
 		BOOST_REQUIRE_EQUAL(closedEvents.size(), 2u);
 		BOOST_CHECK(closedEvents[1].second == std::this_thread::get_id());
 	}
-	(void)aDisconnectedFuture;
 }
 
 BOOST_AUTO_TEST_CASE(CallbackSerialization, *utf::timeout(60))
