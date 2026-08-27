@@ -5,6 +5,7 @@
 #include <deque>
 #include <functional>
 #include <future>
+#include <iostream>
 #include <mutex>
 #include <sstream>
 #include <thread>
@@ -421,9 +422,8 @@ CWebsocketClient::CClientSettings::CClientSettings()
 class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared_from_this<CImpl>
 {
   public:
-	CImpl(const std::string& name, const core::errorlogger::CLogger& logger, const CClientSettings& settings)
+	CImpl(const std::string& name, const CClientSettings& settings)
 		: mName(name)
-		, mLogger(logger)
 		, mSettings(settings)
 		, mIoc(std::max(1, (settings.numThreads + 1) * 2))
 		, mWorkGuard(net::make_work_guard(mIoc))
@@ -496,7 +496,7 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 		const auto safetyTimeout = std::chrono::seconds(mSettings.handshakeTimeoutS * 3 + 5);
 		if (future.wait_for(safetyTimeout) != std::future_status::ready)
 		{
-			mLogger.Error(Prefixed("Connect timed out"));
+			LogError("Connect timed out");
 			return false;
 		}
 		try
@@ -546,7 +546,7 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 		}
 		if (!session || !session->IsOpen())
 		{
-			mLogger.Error(Prefixed("Cannot send: not connected"));
+			LogError("Cannot send: not connected");
 			return;
 		}
 		session->Send(std::move(message));
@@ -610,7 +610,7 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 
 	void LogSessionError(const std::string& message) override
 	{
-		mLogger.Error(Prefixed(message));
+		LogError(message);
 	}
 
   private:
@@ -687,21 +687,22 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 		}
 		catch (const std::exception& e)
 		{
-			mLogger.Error(Prefixed(std::string("Unhandled exception in ") + what + " callback: " + e.what()));
+			LogError(std::string("Unhandled exception in ") + what + " callback: " + e.what());
 		}
 		catch (...)
 		{
-			mLogger.Error(Prefixed(std::string("Unhandled exception in ") + what + " callback"));
+			LogError(std::string("Unhandled exception in ") + what + " callback");
 		}
 	}
 
-	std::string Prefixed(const std::string& message) const
+	void LogError(const std::string& message) const
 	{
-		return mName.empty() ? message : ("[" + mName + "] " + message);
+		// Single insertion of a pre-built string keeps lines intact across threads
+		const std::string line = (mName.empty() ? message : "[" + mName + "] " + message) + "\n";
+		std::cerr << line << std::flush;
 	}
 
 	const std::string mName;
-	const core::errorlogger::CLogger mLogger;
 	const CClientSettings mSettings;
 
 	net::io_context mIoc;
@@ -724,37 +725,25 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 // ---------------------------------------------------------------------------
 
 CWebsocketClient::CWebsocketClient()
-	: mImpl(std::make_shared<CImpl>("", core::errorlogger::CLogger(), CClientSettings()))
+	: mImpl(std::make_shared<CImpl>("", CClientSettings()))
 {
 	mImpl->Start();
 }
 
 CWebsocketClient::CWebsocketClient(const CClientSettings& settings)
-	: mImpl(std::make_shared<CImpl>("", core::errorlogger::CLogger(), settings))
+	: mImpl(std::make_shared<CImpl>("", settings))
 {
 	mImpl->Start();
 }
 
 CWebsocketClient::CWebsocketClient(const std::string& name)
-	: mImpl(std::make_shared<CImpl>(name, core::errorlogger::CLogger(), CClientSettings()))
+	: mImpl(std::make_shared<CImpl>(name, CClientSettings()))
 {
 	mImpl->Start();
 }
 
 CWebsocketClient::CWebsocketClient(const std::string& name, const CClientSettings& settings)
-	: mImpl(std::make_shared<CImpl>(name, core::errorlogger::CLogger(), settings))
-{
-	mImpl->Start();
-}
-
-CWebsocketClient::CWebsocketClient(const core::errorlogger::CLogger& errorLogger)
-	: mImpl(std::make_shared<CImpl>("", errorLogger, CClientSettings()))
-{
-	mImpl->Start();
-}
-
-CWebsocketClient::CWebsocketClient(const core::errorlogger::CLogger& errorLogger, const CClientSettings& settings)
-	: mImpl(std::make_shared<CImpl>("", errorLogger, settings))
+	: mImpl(std::make_shared<CImpl>(name, settings))
 {
 	mImpl->Start();
 }

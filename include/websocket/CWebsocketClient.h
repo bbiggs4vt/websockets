@@ -8,7 +8,6 @@
 #include <boost/function.hpp>
 #include <boost/optional.hpp>
 
-#include "core/errorlogger/CLogger.h"
 #include "sslcontext/ISslContext.h"
 
 namespace websocketclient
@@ -47,11 +46,6 @@ class CWebsocketClient
 	/// @param[in] name identifier for debugging
 	/// @param[in] settings client settings to use
 	CWebsocketClient(const std::string& name, const CClientSettings& settings);
-	/// @param[in] errorLogger used for errorlogging
-	CWebsocketClient(const core::errorlogger::CLogger& errorLogger);
-	/// @param[in] errorLogger used for errorlogging
-	/// @param[in] settings client settings to use
-	CWebsocketClient(const core::errorlogger::CLogger& errorLogger, const CClientSettings& settings);
 	/// Destructor. Disconnects from the server (if connected) and stops all IO threads
 	~CWebsocketClient();
 

@@ -9,7 +9,6 @@ find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
 add_library(websocketclient STATIC
-    src/CLogger.cpp
     src/ISslContext.cpp
     src/CWebsocketClient.cpp
 )
