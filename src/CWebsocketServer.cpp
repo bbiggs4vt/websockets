@@ -1,5 +1,7 @@
 #include "CWebsocketServer.h"
 
+#include "CWorkQueue.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -685,88 +687,6 @@ class CDetectSession : public std::enable_shared_from_this<CDetectSession>
 	const std::weak_ptr<IServerEvents> mEvents;
 };
 
-// ---------------------------------------------------------------------------
-// Single-threaded callback workqueue
-// ---------------------------------------------------------------------------
-
-class CWorkQueue
-{
-  public:
-	~CWorkQueue()
-	{
-		Stop();
-	}
-
-	void Start()
-	{
-		mThread = std::thread([this]() { Run(); });
-	}
-
-	void Post(std::function<void()> fn)
-	{
-		{
-			std::lock_guard<std::mutex> lock(mMutex);
-			if (mStopped)
-			{
-				return;
-			}
-			mQueue.push_back(std::move(fn));
-		}
-		mCondition.notify_one();
-	}
-
-	/// Stops the queue after draining already-posted work
-	void Stop()
-	{
-		{
-			std::lock_guard<std::mutex> lock(mMutex);
-			if (mStopped)
-			{
-				return;
-			}
-			mStopped = true;
-		}
-		mCondition.notify_one();
-		if (mThread.joinable())
-		{
-			if (mThread.get_id() == std::this_thread::get_id())
-			{
-				mThread.detach();
-			}
-			else
-			{
-				mThread.join();
-			}
-		}
-	}
-
-  private:
-	void Run()
-	{
-		for (;;)
-		{
-			std::function<void()> fn;
-			{
-				std::unique_lock<std::mutex> lock(mMutex);
-				mCondition.wait(lock, [this]() { return mStopped || !mQueue.empty(); });
-				if (mQueue.empty())
-				{
-					return; // stopped and drained
-				}
-				fn = std::move(mQueue.front());
-				mQueue.pop_front();
-			}
-			fn();
-		}
-	}
-
-	std::mutex mMutex;
-	std::condition_variable mCondition;
-	std::deque<std::function<void()>> mQueue;
-	bool mStopped = false;
-	std::thread mThread;
-};
-
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -841,9 +761,14 @@ class CWebsocketServer::CImpl : public IServerEvents, public std::enable_shared_
 		: mName(name)
 		, mSettings(settings)
 		, mMutex(settings.internalMutex ? settings.internalMutex : std::make_shared<std::mutex>())
-		, mIoc(std::max(1, settings.numThreads))
-		, mWorkGuard(net::make_work_guard(mIoc))
+		, mOwnsPool(!settings.ioPool)
+		, mPool(settings.ioPool ? settings.ioPool
+								: std::make_shared<CIoPool>(std::max(1, settings.numThreads)))
 	{
+		// Sessions and connections keep a settings copy; strip the pool reference so
+		// orphaned sessions never form an ownership cycle keeping a stopped pool alive
+		mSessionSettings = settings;
+		mSessionSettings.ioPool.reset();
 	}
 
 	~CImpl() override
@@ -851,16 +776,10 @@ class CWebsocketServer::CImpl : public IServerEvents, public std::enable_shared_
 		Shutdown();
 	}
 
-	/// Threads are started outside the constructor so shared_from_this is valid
-	/// by the time any IO can run
+	/// The workqueue is started outside the constructor so shared_from_this is
+	/// valid by the time any IO can run
 	void StartThreads()
 	{
-		const int threadCount = std::max(1, mSettings.numThreads);
-		mIoThreads.reserve(threadCount);
-		for (int i = 0; i < threadCount; ++i)
-		{
-			mIoThreads.emplace_back([this]() { mIoc.run(); });
-		}
 		mWorkQueue.Start();
 	}
 
@@ -872,24 +791,14 @@ class CWebsocketServer::CImpl : public IServerEvents, public std::enable_shared_
 			return;
 		}
 		Stop();
-		mWorkQueue.Stop();
-		mWorkGuard.reset();
-		mIoc.stop();
-		for (std::thread& thread : mIoThreads)
+		if (mOwnsPool)
 		{
-			if (!thread.joinable())
-			{
-				continue;
-			}
-			if (thread.get_id() == std::this_thread::get_id())
-			{
-				thread.detach();
-			}
-			else
-			{
-				thread.join();
-			}
+			// Private pool: prompt teardown, abandoning any in-flight operations
+			mPool->Stop();
 		}
+		// Borrowed pool: the pool keeps running; closed sessions wind down
+		// asynchronously and their events are dropped once the queue stops
+		mWorkQueue.Stop();
 	}
 
 	void Start(const std::string& address, unsigned short port, const CClientCallbacks& clientCbs)
@@ -898,7 +807,7 @@ class CWebsocketServer::CImpl : public IServerEvents, public std::enable_shared_
 		{
 			throw std::runtime_error("CWebsocketServer is shut down");
 		}
-		auto acceptor = std::make_shared<tcp::acceptor>(net::make_strand(mIoc));
+		auto acceptor = std::make_shared<tcp::acceptor>(net::make_strand(mPool->Context()));
 		const tcp::endpoint endpoint(net::ip::make_address(address), port);
 		acceptor->open(endpoint.protocol());
 		acceptor->set_option(net::socket_base::reuse_address(true));
@@ -1233,7 +1142,7 @@ class CWebsocketServer::CImpl : public IServerEvents, public std::enable_shared_
 	void DoAccept(const std::shared_ptr<tcp::acceptor>& acceptor)
 	{
 		std::weak_ptr<CImpl> weakSelf = shared_from_this();
-		acceptor->async_accept(net::make_strand(mIoc),
+		acceptor->async_accept(net::make_strand(mPool->Context()),
 							   [weakSelf, acceptor](beast::error_code ec, tcp::socket socket) {
 								   auto self = weakSelf.lock();
 								   if (!self || !acceptor->is_open())
@@ -1264,18 +1173,18 @@ class CWebsocketServer::CImpl : public IServerEvents, public std::enable_shared_
 			if (mSettings.sslRequired)
 			{
 				std::make_shared<CHttpConnection<CSslStream>>(std::move(stream), sslCtx, beast::flat_buffer(),
-															  mSettings, events)
+															  mSessionSettings, events)
 					->Run();
 			}
 			else
 			{
-				std::make_shared<CDetectSession>(std::move(stream), sslCtx, mSettings, events)->Run();
+				std::make_shared<CDetectSession>(std::move(stream), sslCtx, mSessionSettings, events)->Run();
 			}
 		}
 		else
 		{
 			std::make_shared<CHttpConnection<CPlainStream>>(std::move(stream), beast::flat_buffer(),
-															mSettings, events)
+															mSessionSettings, events)
 				->Run();
 		}
 	}
@@ -1411,10 +1320,10 @@ class CWebsocketServer::CImpl : public IServerEvents, public std::enable_shared_
 	const CServerSettings mSettings;
 	const std::shared_ptr<std::mutex> mMutex;
 
-	net::io_context mIoc;
-	net::executor_work_guard<net::io_context::executor_type> mWorkGuard;
-	std::vector<std::thread> mIoThreads;
-	CWorkQueue mWorkQueue;
+	CServerSettings mSessionSettings; //!< settings copy handed to sessions/connections (ioPool cleared)
+	const bool mOwnsPool;
+	const CIoPoolPtr mPool;
+	detail::CWorkQueue mWorkQueue;
 	std::atomic<bool> mShutdown{false};
 
 	// All state below is guarded by *mMutex

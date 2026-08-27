@@ -1,5 +1,7 @@
 #include "CWebsocketClient.h"
 
+#include "CWorkQueue.h"
+
 #include <atomic>
 #include <chrono>
 #include <deque>
@@ -69,8 +71,8 @@ class ISessionEvents
 {
   public:
 	virtual ~ISessionEvents() = default;
-	virtual void OnSessionMessage(const std::string& message) = 0;
-	virtual void OnSessionContent(const std::vector<uint8_t>& content) = 0;
+	virtual void OnSessionMessage(std::string message) = 0;
+	virtual void OnSessionContent(std::vector<uint8_t> content) = 0;
 	virtual void OnSessionDisconnect() = 0;
 	virtual void LogSessionError(const std::string& message) = 0;
 };
@@ -425,9 +427,14 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 	CImpl(const std::string& name, const CClientSettings& settings)
 		: mName(name)
 		, mSettings(settings)
-		, mIoc(std::max(1, (settings.numThreads + 1) * 2))
-		, mWorkGuard(net::make_work_guard(mIoc))
+		, mOwnsPool(!settings.ioPool)
+		, mPool(settings.ioPool ? settings.ioPool
+								: std::make_shared<CIoPool>(std::max(1, (settings.numThreads + 1) * 2)))
 	{
+		// Sessions keep a settings copy; strip the pool reference so orphaned
+		// sessions never form an ownership cycle keeping a stopped pool alive
+		mSessionSettings = settings;
+		mSessionSettings.ioPool.reset();
 	}
 
 	~CImpl() override
@@ -435,16 +442,11 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 		Shutdown();
 	}
 
-	/// Threads are started outside the constructor so shared_from_this is valid
-	/// by the time any IO can run
+	/// The workqueue is started outside the constructor so shared_from_this is
+	/// valid by the time any IO can run
 	void Start()
 	{
-		const int threadCount = std::max(1, (mSettings.numThreads + 1) * 2);
-		mThreads.reserve(threadCount);
-		for (int i = 0; i < threadCount; ++i)
-		{
-			mThreads.emplace_back([this]() { mIoc.run(); });
-		}
+		mWorkQueue.Start();
 	}
 
 	void Shutdown()
@@ -463,23 +465,15 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 		{
 			session->Close();
 		}
-		mWorkGuard.reset();
-		mIoc.stop();
-		for (std::thread& thread : mThreads)
+		if (mOwnsPool)
 		{
-			if (!thread.joinable())
-			{
-				continue;
-			}
-			if (thread.get_id() == std::this_thread::get_id())
-			{
-				thread.detach();
-			}
-			else
-			{
-				thread.join();
-			}
+			// Private pool: prompt teardown, abandoning any in-flight operations
+			mPool->Stop();
 		}
+		// Borrowed pool: the pool keeps running; cancelled session operations wind
+		// down asynchronously and their events are dropped once the queue stops.
+		// Draining the workqueue guarantees no callback runs after Shutdown returns
+		mWorkQueue.Stop();
 	}
 
 	bool Connect(const std::string& host, size_t port, const std::string& resource)
@@ -576,26 +570,38 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 		mOnContent = std::move(cb);
 	}
 
-	// ISessionEvents (invoked from IO threads)
+	// ISessionEvents (invoked from IO threads; callbacks are relayed to the workqueue)
 
-	void OnSessionMessage(const std::string& message) override
+	void OnSessionMessage(std::string message) override
 	{
 		boost::function<void(const std::string&)> cb;
 		{
 			std::lock_guard<std::mutex> lock(mCallbackMutex);
 			cb = mOnMessage;
 		}
-		InvokeCallback("message", cb, message);
+		if (!cb)
+		{
+			return;
+		}
+		mWorkQueue.Post([this, cb = std::move(cb), message = std::move(message)]() {
+			InvokeCallback("message", cb, message);
+		});
 	}
 
-	void OnSessionContent(const std::vector<uint8_t>& content) override
+	void OnSessionContent(std::vector<uint8_t> content) override
 	{
 		boost::function<void(const std::vector<uint8_t>&)> cb;
 		{
 			std::lock_guard<std::mutex> lock(mCallbackMutex);
 			cb = mOnContent;
 		}
-		InvokeCallback("content", cb, content);
+		if (!cb)
+		{
+			return;
+		}
+		mWorkQueue.Post([this, cb = std::move(cb), content = std::move(content)]() {
+			InvokeCallback("content", cb, content);
+		});
 	}
 
 	void OnSessionDisconnect() override
@@ -605,7 +611,11 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 			std::lock_guard<std::mutex> lock(mCallbackMutex);
 			cb = mOnDisconnect;
 		}
-		InvokeCallback("disconnect", cb);
+		if (!cb)
+		{
+			return;
+		}
+		mWorkQueue.Post([this, cb = std::move(cb)]() { InvokeCallback("disconnect", cb); });
 	}
 
 	void LogSessionError(const std::string& message) override
@@ -659,9 +669,10 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 		std::weak_ptr<ISessionEvents> events = shared_from_this();
 		if (mSettings.sslContext && *mSettings.sslContext)
 		{
-			return std::make_shared<CSession<CSslStream>>(mIoc, mSettings, events, *mSettings.sslContext);
+			return std::make_shared<CSession<CSslStream>>(mPool->Context(), mSessionSettings, events,
+														  *mSettings.sslContext);
 		}
-		return std::make_shared<CSession<CPlainStream>>(mIoc, mSettings, events);
+		return std::make_shared<CSession<CPlainStream>>(mPool->Context(), mSessionSettings, events);
 	}
 
 	void NotifyConnected()
@@ -671,7 +682,11 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 			std::lock_guard<std::mutex> lock(mCallbackMutex);
 			cb = mOnConnect;
 		}
-		InvokeCallback("connect", cb);
+		if (!cb)
+		{
+			return;
+		}
+		mWorkQueue.Post([this, cb = std::move(cb)]() { InvokeCallback("connect", cb); });
 	}
 
 	template <class TCallback, class... TArgs>
@@ -704,10 +719,11 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 
 	const std::string mName;
 	const CClientSettings mSettings;
+	CClientSettings mSessionSettings; //!< settings copy handed to sessions (ioPool cleared)
 
-	net::io_context mIoc;
-	net::executor_work_guard<net::io_context::executor_type> mWorkGuard;
-	std::vector<std::thread> mThreads;
+	const bool mOwnsPool;
+	const CIoPoolPtr mPool;
+	detail::CWorkQueue mWorkQueue;
 	std::atomic<bool> mShutdown{false};
 
 	mutable std::mutex mSessionMutex;

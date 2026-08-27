@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "CIoPool.h"
 #include "ISslContext.h"
 
 namespace websocketclient
@@ -170,6 +171,7 @@ class CWebsocketServer
 		/// Number of threads to use for IO. This influences the number of threads accepting client connections and receiving client messages/content.
 		/// The server employs max(1, numThreads) IO threads plus one dedicated callback workqueue thread
 		/// @note CClientCallbacks are *always* pipelined through a single-threaded workqueue regardless of thread count
+		/// @note Ignored if ioPool is set
 		int numThreads;
 		/// If set, used to establish a ssl session w/ clients
 		std::optional<sslcontext::ISslContextPtr> sslContext;
@@ -186,8 +188,12 @@ class CWebsocketServer
 		/// Internal mutex for server state, shared between servers constructed from the same settings.
 		/// Left null, each server creates its own
 		std::shared_ptr<std::mutex> internalMutex;
+		/// If set, IO runs on this shared pool instead of server-owned threads (numThreads is then
+		/// ignored). The server holds a reference to the pool for its lifetime. Callbacks are still
+		/// delivered via this server's own single-threaded workqueue
+		CIoPoolPtr ioPool;
 
-		/// Sets defaults for server settings { 30, 30, true, 1, (empty), false, (empty), StandardMaxOutstandingWrites }
+		/// Sets defaults for server settings { 30, 30, true, 1, (empty), false, (empty), StandardMaxOutstandingWrites, (new mutex), (empty) }
 		CServerSettings();
 	};
 	typedef std::shared_ptr<CServerSettings> CServerSettingsPtr;

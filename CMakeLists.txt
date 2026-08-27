@@ -9,6 +9,7 @@ find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
 add_library(websocketclient STATIC
+    src/CIoPool.cpp
     src/ISslContext.cpp
     src/CWebsocketClient.cpp
     src/CWebsocketServer.cpp
@@ -56,6 +57,11 @@ if(WEBSOCKETCLIENT_BUILD_TESTS)
     target_link_libraries(websocketserver_stress_test PRIVATE websocketclient)
     add_test(NAME websocketserver_stress_test COMMAND websocketserver_stress_test)
     set_tests_properties(websocketserver_stress_test PROPERTIES TIMEOUT 300)
+
+    add_executable(websocketpool_test tests/websocketpool_test.cpp)
+    target_link_libraries(websocketpool_test PRIVATE websocketclient)
+    add_test(NAME websocketpool_test COMMAND websocketpool_test)
+    set_tests_properties(websocketpool_test PROPERTIES TIMEOUT 300)
 endif()
 
 install(TARGETS websocketclient ARCHIVE DESTINATION lib)

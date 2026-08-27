@@ -8,6 +8,7 @@
 #include <boost/function.hpp>
 #include <boost/optional.hpp>
 
+#include "CIoPool.h"
 #include "ISslContext.h"
 
 namespace websocketclient
@@ -29,11 +30,17 @@ class CWebsocketClient
 		bool enablePings;
 		/// Number of threads to use for IO. This influences the number of threads accepting and sending server messages
 		/// Actual number of employed threads is (numThreads + 1) * 2
+		/// @note Ignored if ioPool is set
 		int numThreads;
 		/// If set, used to establish a ssl connection
 		boost::optional<sslcontext::ISslContextPtr> sslContext;
+		/// If set, IO runs on this shared pool instead of client-owned threads (numThreads is then
+		/// ignored). The client holds a reference to the pool for its lifetime. Callbacks are still
+		/// delivered via this client's own single-threaded workqueue, so a slow callback never
+		/// stalls the shared pool
+		CIoPoolPtr ioPool;
 
-		/// Creates ClientSettings with defaults (e.g. {30, 30, true, 1, (empty)})
+		/// Creates ClientSettings with defaults (e.g. {30, 30, true, 1, (empty), (empty)})
 		CClientSettings();
 	};
 
@@ -83,6 +90,7 @@ class CWebsocketClient
 	void SendContent(const std::vector<uint8_t>& content);
 	/// Sends a binary payload to the server
 	void SendContent(const std::shared_ptr<std::vector<uint8_t>>& content);
+	/// @note Callbacks are delivered via a single-threaded workqueue and will not occur concurrently
 	/// @param[in] cb called when this client connects/is connected to the server
 	void RegisterConnectCallback(boost::function<void(void)> cb);
 	/// @param[in] cb called when this client disconnects/is disconnected from the server

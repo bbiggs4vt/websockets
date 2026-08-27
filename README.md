@@ -19,9 +19,34 @@ A basic C++ websocket client and server built on [Boost.Beast](https://www.boost
 - **Sends** — per-client, broadcast to all, or broadcast per URI; text and binary; delayed-eval overloads build the payload only if a matching client is connected. Broadcast payloads are shared, not copied per client. A per-session backlog cap (`maxSessionBacklog`, default `StandardMaxOutstandingWrites`) drops payloads to slow consumers instead of buffering unboundedly.
 - **Serialized callbacks** — all callbacks are delivered on one dedicated workqueue thread and never run concurrently, except the closed/connection-change callbacks during `Stop()`/`RemoveClient()`, which run in the calling thread (per the header contract).
 
+## Shared IO pool
+
+By default every client and server owns its IO threads. When a process hosts many
+instances, give them one `CIoPool` instead:
+
+```cpp
+#include "CIoPool.h"
+
+auto pool = std::make_shared<CIoPool>(4); // e.g. sized to the core count
+
+CWebsocketClient::CClientSettings clientSettings;
+clientSettings.ioPool = pool;
+CWebsocketServer::CServerSettings serverSettings;
+serverSettings.ioPool = pool;
+// every instance created with these settings shares the 4 IO threads
+```
+
+With `ioPool` set, `numThreads` is ignored and the instance holds a reference to the
+pool for its lifetime, so the pool outlives it under normal destruction order.
+Callbacks are still delivered on each instance's own single-threaded workqueue
+(never on pool threads), so one slow callback cannot stall shared IO — but blocking
+inside a callback still delays that instance's later callbacks, and the blocking
+`Connect(...)` must not be called from any callback of any instance on the pool.
+
 ## Layout
 
 ```
+src/CIoPool.h                             Shared IO thread pool
 src/CWebsocketClient.h                    Public client API
 src/CWebsocketServer.h                    Public server API
 src/ISslContext.h                         SSL context abstraction (+ default TLS client impl)
@@ -32,6 +57,7 @@ tests/websocketclient_test.cpp            Client loopback tests (Boost.Test)
 tests/websocketclient_stress_test.cpp     Client concurrency + lifecycle stress tests
 tests/websocketserver_test.cpp            Server functional tests (uses CWebsocketClient as peer)
 tests/websocketserver_stress_test.cpp     Server concurrency + lifecycle stress tests
+tests/websocketpool_test.cpp              Shared io-pool tests (client + server on one pool)
 tests/test_helpers.h                      Shared test servers (echo + silent)
 ```
 
