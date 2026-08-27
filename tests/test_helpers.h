@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <future>
 #include <iostream>
 #include <string>
@@ -20,25 +21,25 @@ namespace websocket = boost::beast::websocket;
 namespace net = boost::asio;
 using tcp = net::ip::tcp;
 
-inline int gFailures = 0;
-
-inline void Check(bool condition, const std::string& what)
-{
-	if (condition)
-	{
-		std::cout << "PASS: " << what << "\n";
-	}
-	else
-	{
-		std::cerr << "FAIL: " << what << "\n";
-		++gFailures;
-	}
-}
-
 template <class T>
 bool WaitFor(std::future<T>& future, std::chrono::seconds timeout = std::chrono::seconds(10))
 {
 	return future.wait_for(timeout) == std::future_status::ready;
+}
+
+/// Polls until `done` returns true or the deadline passes
+inline bool PollUntil(const std::function<bool()>& done, std::chrono::seconds timeout = std::chrono::seconds(20))
+{
+	const auto deadline = std::chrono::steady_clock::now() + timeout;
+	while (std::chrono::steady_clock::now() < deadline)
+	{
+		if (done())
+		{
+			return true;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	return done();
 }
 
 /// Websocket echo server that accepts connections sequentially (one at a time)

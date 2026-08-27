@@ -18,8 +18,8 @@ src/CWebsocketClient.h                 Public client API
 src/ISslContext.h                      SSL context abstraction (+ default TLS client impl)
 src/*.cpp                              Implementation (Boost.Beast, pimpl)
 examples/echo_client.cpp               Small demo program
-tests/websocketclient_test.cpp         Loopback echo-server test
-tests/websocketclient_stress_test.cpp  Concurrency + lifecycle stress tests
+tests/websocketclient_test.cpp         Loopback echo-server tests (Boost.Test)
+tests/websocketclient_stress_test.cpp  Concurrency + lifecycle stress tests (Boost.Test)
 tests/test_helpers.h                   Shared test servers (echo + silent)
 ```
 
@@ -32,6 +32,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ctest --test-dir build --output-on-failure   # run the tests
 ```
+
+Tests are written with Boost.Test (the header-only "included" variant, so no
+extra Boost libraries are needed) and register with CTest; run them via
+`ctest` or directly (e.g. `./websocketclient_stress_test --log_level=test_suite`,
+`--run_test=ConcurrentSends` for a single case).
 
 The stress suite (`websocketclient_stress_test`) covers concurrent sends from
 many threads, Send/Close races, client destruction while sends are queued,
