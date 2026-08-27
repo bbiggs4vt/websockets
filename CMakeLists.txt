@@ -11,6 +11,7 @@ find_package(Threads REQUIRED)
 add_library(websocketclient STATIC
     src/ISslContext.cpp
     src/CWebsocketClient.cpp
+    src/CWebsocketServer.cpp
 )
 target_include_directories(websocketclient PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
@@ -29,6 +30,9 @@ option(WEBSOCKETCLIENT_BUILD_TESTS "Build tests" ON)
 if(WEBSOCKETCLIENT_BUILD_EXAMPLES)
     add_executable(echo_client examples/echo_client.cpp)
     target_link_libraries(echo_client PRIVATE websocketclient)
+
+    add_executable(echo_server examples/echo_server.cpp)
+    target_link_libraries(echo_server PRIVATE websocketclient)
 endif()
 
 if(WEBSOCKETCLIENT_BUILD_TESTS)
@@ -42,6 +46,16 @@ if(WEBSOCKETCLIENT_BUILD_TESTS)
     target_link_libraries(websocketclient_stress_test PRIVATE websocketclient)
     add_test(NAME websocketclient_stress_test COMMAND websocketclient_stress_test)
     set_tests_properties(websocketclient_stress_test PROPERTIES TIMEOUT 300)
+
+    add_executable(websocketserver_test tests/websocketserver_test.cpp)
+    target_link_libraries(websocketserver_test PRIVATE websocketclient)
+    add_test(NAME websocketserver_test COMMAND websocketserver_test)
+    set_tests_properties(websocketserver_test PROPERTIES TIMEOUT 180)
+
+    add_executable(websocketserver_stress_test tests/websocketserver_stress_test.cpp)
+    target_link_libraries(websocketserver_stress_test PRIVATE websocketclient)
+    add_test(NAME websocketserver_stress_test COMMAND websocketserver_stress_test)
+    set_tests_properties(websocketserver_stress_test PROPERTIES TIMEOUT 300)
 endif()
 
 install(TARGETS websocketclient ARCHIVE DESTINATION lib)
