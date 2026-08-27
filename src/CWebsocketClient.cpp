@@ -1,4 +1,4 @@
-#include "websocket/CWebsocketClient.h"
+#include "CWebsocketClient.h"
 
 #include <atomic>
 #include <chrono>

@@ -19,8 +19,8 @@
 #include <sstream>
 #include <thread>
 
+#include "CWebsocketClient.h"
 #include "test_helpers.h"
-#include "websocket/CWebsocketClient.h"
 
 using testhelpers::CEchoServer;
 using testhelpers::Check;

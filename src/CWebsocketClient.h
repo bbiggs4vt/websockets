@@ -8,7 +8,7 @@
 #include <boost/function.hpp>
 #include <boost/optional.hpp>
 
-#include "sslcontext/ISslContext.h"
+#include "ISslContext.h"
 
 namespace websocketclient
 {

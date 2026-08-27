@@ -14,9 +14,9 @@ A basic C++ websocket client built on [Boost.Beast](https://www.boost.org/doc/li
 ## Layout
 
 ```
-include/websocket/CWebsocketClient.h   Public client API
-include/sslcontext/ISslContext.h       SSL context abstraction (+ default TLS client impl)
-src/                                   Implementation (Boost.Beast, pimpl)
+src/CWebsocketClient.h                 Public client API
+src/ISslContext.h                      SSL context abstraction (+ default TLS client impl)
+src/*.cpp                              Implementation (Boost.Beast, pimpl)
 examples/echo_client.cpp               Small demo program
 tests/websocketclient_test.cpp         Loopback echo-server test
 tests/websocketclient_stress_test.cpp  Concurrency + lifecycle stress tests
@@ -50,7 +50,7 @@ cmake --build build-tsan -j && ctest --test-dir build-tsan --output-on-failure
 ## Usage
 
 ```cpp
-#include "websocket/CWebsocketClient.h"
+#include "CWebsocketClient.h"
 
 using namespace websocketclient;
 

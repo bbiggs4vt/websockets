@@ -9,7 +9,7 @@
 #include <iostream>
 #include <thread>
 
-#include "websocket/CWebsocketClient.h"
+#include "CWebsocketClient.h"
 
 int main(int argc, char* argv[])
 {

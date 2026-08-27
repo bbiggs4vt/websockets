@@ -13,7 +13,7 @@ add_library(websocketclient STATIC
     src/CWebsocketClient.cpp
 )
 target_include_directories(websocketclient PUBLIC
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
     $<INSTALL_INTERFACE:include>
 )
 target_link_libraries(websocketclient PUBLIC
@@ -45,4 +45,4 @@ if(WEBSOCKETCLIENT_BUILD_TESTS)
 endif()
 
 install(TARGETS websocketclient ARCHIVE DESTINATION lib)
-install(DIRECTORY include/ DESTINATION include)
+install(DIRECTORY src/ DESTINATION include FILES_MATCHING PATTERN "*.h")

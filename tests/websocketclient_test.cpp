@@ -8,8 +8,8 @@
 #include <iostream>
 #include <thread>
 
+#include "CWebsocketClient.h"
 #include "test_helpers.h"
-#include "websocket/CWebsocketClient.h"
 
 int main()
 {
