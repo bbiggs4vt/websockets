@@ -62,6 +62,11 @@ if(WEBSOCKETCLIENT_BUILD_TESTS)
     target_link_libraries(websocketpool_test PRIVATE websocketclient)
     add_test(NAME websocketpool_test COMMAND websocketpool_test)
     set_tests_properties(websocketpool_test PROPERTIES TIMEOUT 300)
+
+    add_executable(websockettls_test tests/websockettls_test.cpp)
+    target_link_libraries(websockettls_test PRIVATE websocketclient)
+    add_test(NAME websockettls_test COMMAND websockettls_test)
+    set_tests_properties(websockettls_test PROPERTIES TIMEOUT 180)
 endif()
 
 install(TARGETS websocketclient ARCHIVE DESTINATION lib)

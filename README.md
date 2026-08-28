@@ -58,7 +58,9 @@ tests/websocketclient_stress_test.cpp     Client concurrency + lifecycle stress 
 tests/websocketserver_test.cpp            Server functional tests (uses CWebsocketClient as peer)
 tests/websocketserver_stress_test.cpp     Server concurrency + lifecycle stress tests
 tests/websocketpool_test.cpp              Shared io-pool tests (client + server on one pool)
+tests/websockettls_test.cpp               TLS wire tests (in-process self-signed certificate)
 tests/test_helpers.h                      Shared test servers (echo + silent)
+tests/tls_helpers.h                       Self-signed certificate generation + test ssl contexts
 ```
 
 ## Building
