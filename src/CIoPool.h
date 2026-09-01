@@ -11,13 +11,18 @@
 namespace websocketclient
 {
 
-/// Shared IO thread pool. Multiple CWebsocketClient/CWebsocketServer instances may run their
-/// IO on one pool (via CClientSettings::ioPool / CServerSettings::ioPool) instead of each
-/// instance owning its own threads. Instances hold a reference to the pool they were given,
-/// so the pool outlives them under normal destruction order; the application should keep its
-/// own reference for as long as it keeps creating instances with it.
-/// @note With a shared pool, do not block a callback for long: the pool's threads drive the
-///       IO of every instance sharing it
+class CIoPool;
+typedef std::shared_ptr<CIoPool> CIoPoolPtr;
+
+/// Shared IO thread pool. All CWebsocketClient/CWebsocketServer instances run their IO on a
+/// pool: the process-wide Default() pool unless CClientSettings::ioPool /
+/// CServerSettings::ioPool names another one. Instances hold a reference to the pool they
+/// use, so the pool outlives them under normal destruction order; an application creating
+/// its own pool should keep its own reference for as long as it keeps creating instances
+/// with it.
+/// @note Do not block a callback for long: a pool's threads drive the IO of every instance
+///       sharing it (callbacks run on per-instance workqueues, but a blocking callback still
+///       delays that instance's later callbacks)
 class CIoPool
 {
   public:
@@ -27,8 +32,15 @@ class CIoPool
 	/// Destructor. Stops the pool
 	~CIoPool();
 
+	/// Returns the lazily-created process-wide default pool, sized to the hardware
+	/// concurrency (min 2 threads). Used by every client/server whose settings leave
+	/// ioPool unset
+	/// @return the default pool
+	static CIoPoolPtr Default();
+
 	/// Stops the pool: outstanding IO is abandoned and the threads are joined. Idempotent.
-	/// @note Do not call from a pool thread (e.g. from inside a callback)
+	/// @note Do not call from a pool thread (e.g. from inside a callback), and do not stop
+	///       the Default() pool while instances may still be using it
 	void Stop();
 
 	/// @return the io context driven by this pool's threads
@@ -40,7 +52,5 @@ class CIoPool
 	std::vector<std::thread> mThreads;
 	std::atomic<bool> mStopped{false};
 };
-
-typedef std::shared_ptr<CIoPool> CIoPoolPtr;
 
 } // namespace websocketclient

@@ -22,6 +22,16 @@ CIoPool::~CIoPool()
 	Stop();
 }
 
+CIoPoolPtr CIoPool::Default()
+{
+	// A function-local static keeps initialization thread-safe; borrowers hold their own
+	// references, so even an instance outliving this static keeps the pool alive until
+	// it is done with it
+	static const CIoPoolPtr DEFAULT_POOL =
+		std::make_shared<CIoPool>(static_cast<int>(std::max(2u, std::thread::hardware_concurrency())));
+	return DEFAULT_POOL;
+}
+
 void CIoPool::Stop()
 {
 	bool expected = false;

@@ -427,9 +427,7 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 	CImpl(const std::string& name, const CClientSettings& settings)
 		: mName(name)
 		, mSettings(settings)
-		, mOwnsPool(!settings.ioPool)
-		, mPool(settings.ioPool ? settings.ioPool
-								: std::make_shared<CIoPool>(std::max(1, (settings.numThreads + 1) * 2)))
+		, mPool(settings.ioPool ? settings.ioPool : CIoPool::Default())
 	{
 		// Sessions keep a settings copy; strip the pool reference so orphaned
 		// sessions never form an ownership cycle keeping a stopped pool alive
@@ -465,14 +463,9 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 		{
 			session->Close();
 		}
-		if (mOwnsPool)
-		{
-			// Private pool: prompt teardown, abandoning any in-flight operations
-			mPool->Stop();
-		}
-		// Borrowed pool: the pool keeps running; cancelled session operations wind
-		// down asynchronously and their events are dropped once the queue stops.
-		// Draining the workqueue guarantees no callback runs after Shutdown returns
+		// The (shared) pool keeps running; cancelled session operations wind down
+		// asynchronously and their events are dropped once the queue stops. Draining
+		// the workqueue guarantees no callback runs after Shutdown returns
 		mWorkQueue.Stop();
 	}
 
@@ -721,7 +714,6 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 	const CClientSettings mSettings;
 	CClientSettings mSessionSettings; //!< settings copy handed to sessions (ioPool cleared)
 
-	const bool mOwnsPool;
 	const CIoPoolPtr mPool;
 	detail::CWorkQueue mWorkQueue;
 	std::atomic<bool> mShutdown{false};

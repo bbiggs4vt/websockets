@@ -21,27 +21,29 @@ A basic C++ websocket client and server built on [Boost.Beast](https://www.boost
 
 ## Shared IO pool
 
-By default every client and server owns its IO threads. When a process hosts many
-instances, give them one `CIoPool` instead:
+All clients and servers run their IO on a shared `CIoPool`. By default that is the
+lazily-created, process-wide `CIoPool::Default()` (sized to the hardware concurrency),
+so an application with several clients and servers automatically uses one set of IO
+threads. To isolate instances or control sizing, pass an explicit pool instead:
 
 ```cpp
 #include "CIoPool.h"
 
-auto pool = std::make_shared<CIoPool>(4); // e.g. sized to the core count
+auto pool = std::make_shared<CIoPool>(4);
 
 CWebsocketClient::CClientSettings clientSettings;
-clientSettings.ioPool = pool;
+clientSettings.ioPool = pool; // unset -> CIoPool::Default()
 CWebsocketServer::CServerSettings serverSettings;
 serverSettings.ioPool = pool;
-// every instance created with these settings shares the 4 IO threads
 ```
 
-With `ioPool` set, `numThreads` is ignored and the instance holds a reference to the
-pool for its lifetime, so the pool outlives it under normal destruction order.
-Callbacks are still delivered on each instance's own single-threaded workqueue
-(never on pool threads), so one slow callback cannot stall shared IO — but blocking
-inside a callback still delays that instance's later callbacks, and the blocking
-`Connect(...)` must not be called from any callback of any instance on the pool.
+Each instance holds a reference to its pool for its lifetime and never stops it, so
+the pool outlives it under normal destruction order. Callbacks are always delivered
+on each instance's own single-threaded workqueue (never on pool threads), so one slow
+callback cannot stall shared IO — but blocking inside a callback still delays that
+instance's later callbacks, and the blocking `Connect(...)` must not be called from
+any callback of any instance sharing the pool. `numThreads` in the settings structs
+is retained for source compatibility but no longer has an effect.
 
 ## Layout
 

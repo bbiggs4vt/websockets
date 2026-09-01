@@ -168,10 +168,9 @@ class CWebsocketServer
 		uint16_t idleTimeoutS;
 		/// Whether or not the server will ping the client when idle (also enables idleTimeoutS)
 		bool enablePings;
-		/// Number of threads to use for IO. This influences the number of threads accepting client connections and receiving client messages/content.
-		/// The server employs max(1, numThreads) IO threads plus one dedicated callback workqueue thread
-		/// @note CClientCallbacks are *always* pipelined through a single-threaded workqueue regardless of thread count
-		/// @note Ignored if ioPool is set
+		/// @deprecated No effect: IO threads come from ioPool (CIoPool::Default() when unset).
+		/// Retained for source compatibility
+		/// @note CClientCallbacks are *always* pipelined through a single-threaded workqueue
 		int numThreads;
 		/// If set, used to establish a ssl session w/ clients
 		std::optional<sslcontext::ISslContextPtr> sslContext;
@@ -188,8 +187,9 @@ class CWebsocketServer
 		/// Internal mutex for server state, shared between servers constructed from the same settings.
 		/// Left null, each server creates its own
 		std::shared_ptr<std::mutex> internalMutex;
-		/// If set, IO runs on this shared pool instead of server-owned threads (numThreads is then
-		/// ignored). The server holds a reference to the pool for its lifetime. Callbacks are still
+		/// Pool the server's IO runs on; when unset, the process-wide CIoPool::Default() is used,
+		/// so all default-configured clients and servers share one set of IO threads. The server
+		/// holds a reference to its pool for its lifetime and never stops it. Callbacks are
 		/// delivered via this server's own single-threaded workqueue
 		CIoPoolPtr ioPool;
 

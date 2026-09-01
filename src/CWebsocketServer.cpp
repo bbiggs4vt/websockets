@@ -761,9 +761,7 @@ class CWebsocketServer::CImpl : public IServerEvents, public std::enable_shared_
 		: mName(name)
 		, mSettings(settings)
 		, mMutex(settings.internalMutex ? settings.internalMutex : std::make_shared<std::mutex>())
-		, mOwnsPool(!settings.ioPool)
-		, mPool(settings.ioPool ? settings.ioPool
-								: std::make_shared<CIoPool>(std::max(1, settings.numThreads)))
+		, mPool(settings.ioPool ? settings.ioPool : CIoPool::Default())
 	{
 		// Sessions and connections keep a settings copy; strip the pool reference so
 		// orphaned sessions never form an ownership cycle keeping a stopped pool alive
@@ -791,13 +789,8 @@ class CWebsocketServer::CImpl : public IServerEvents, public std::enable_shared_
 			return;
 		}
 		Stop();
-		if (mOwnsPool)
-		{
-			// Private pool: prompt teardown, abandoning any in-flight operations
-			mPool->Stop();
-		}
-		// Borrowed pool: the pool keeps running; closed sessions wind down
-		// asynchronously and their events are dropped once the queue stops
+		// The (shared) pool keeps running; closed sessions wind down asynchronously
+		// and their events are dropped once the queue stops
 		mWorkQueue.Stop();
 	}
 
@@ -1321,7 +1314,6 @@ class CWebsocketServer::CImpl : public IServerEvents, public std::enable_shared_
 	const std::shared_ptr<std::mutex> mMutex;
 
 	CServerSettings mSessionSettings; //!< settings copy handed to sessions/connections (ioPool cleared)
-	const bool mOwnsPool;
 	const CIoPoolPtr mPool;
 	detail::CWorkQueue mWorkQueue;
 	std::atomic<bool> mShutdown{false};

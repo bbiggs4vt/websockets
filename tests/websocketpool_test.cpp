@@ -1,5 +1,7 @@
 /// Tests for sharing one CIoPool across CWebsocketClient and CWebsocketServer
 /// instances:
+///  - default-configured instances share the process-wide CIoPool::Default()
+///    (verified via the process thread count)
 ///  - client + server end-to-end on one pool, and pool reuse after both die
 ///  - several servers and clients on one pool with cross traffic
 ///  - repeated instance destruction on a shared pool (with traffic in flight)
@@ -15,6 +17,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <fstream>
 #include <future>
 #include <mutex>
 #include <thread>
@@ -37,6 +40,22 @@ using websocketclient::CWebsocketServer;
 
 namespace
 {
+
+#ifdef __linux__
+size_t CountProcessThreads()
+{
+	std::ifstream status("/proc/self/status");
+	std::string line;
+	while (std::getline(status, line))
+	{
+		if (line.rfind("Threads:", 0) == 0)
+		{
+			return std::stoul(line.substr(8));
+		}
+	}
+	return 0;
+}
+#endif
 
 CWebsocketServer::CServerSettings ServerSettings(const CIoPoolPtr& pool)
 {
@@ -81,6 +100,39 @@ bool RoundTrip(const CIoPoolPtr& pool)
 }
 
 } // namespace
+
+BOOST_AUTO_TEST_CASE(DefaultPoolIsShared, *utf::timeout(120))
+{
+	BOOST_CHECK(CIoPool::Default() == CIoPool::Default());
+
+	// Default-configured server + client work end to end on the default pool
+	CWebsocketServer server("default_pool_server");
+	std::promise<std::string> serverGot;
+	CWebsocketServer::CClientCallbacks callbacks;
+	callbacks.mOnClientMessageReceivedCb = [&](uint32_t, const std::string& m) { serverGot.set_value(m); };
+	server.Start(static_cast<unsigned short>(0), callbacks);
+
+	CWebsocketClient client("default_pool_client");
+	BOOST_REQUIRE(client.Connect("127.0.0.1", server.Port(), "/"));
+	client.SendMessage("via-default-pool");
+	auto gotFuture = serverGot.get_future();
+	BOOST_REQUIRE(WaitFor(gotFuture));
+	BOOST_CHECK_EQUAL(gotFuture.get(), "via-default-pool");
+
+#ifdef __linux__
+	// More default-configured clients add only their workqueue thread each -
+	// no per-instance IO threads
+	const size_t baseThreads = CountProcessThreads();
+	std::vector<std::unique_ptr<CWebsocketClient>> extras;
+	for (int i = 0; i < 3; ++i)
+	{
+		extras.push_back(std::make_unique<CWebsocketClient>("default_extra_" + std::to_string(i)));
+	}
+	const size_t withExtras = CountProcessThreads();
+	BOOST_CHECK_EQUAL(withExtras - baseThreads, 3u);
+#endif
+	client.Close();
+}
 
 BOOST_AUTO_TEST_CASE(SharedPoolEndToEnd, *utf::timeout(120))
 {

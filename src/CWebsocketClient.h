@@ -28,14 +28,14 @@ class CWebsocketClient
 		uint16_t idleTimeoutS;
 		/// Whether or not the server will ping the client when idle (also enables idleTimeoutS)
 		bool enablePings;
-		/// Number of threads to use for IO. This influences the number of threads accepting and sending server messages
-		/// Actual number of employed threads is (numThreads + 1) * 2
-		/// @note Ignored if ioPool is set
+		/// @deprecated No effect: IO threads come from ioPool (CIoPool::Default() when unset).
+		/// Retained for source compatibility
 		int numThreads;
 		/// If set, used to establish a ssl connection
 		boost::optional<sslcontext::ISslContextPtr> sslContext;
-		/// If set, IO runs on this shared pool instead of client-owned threads (numThreads is then
-		/// ignored). The client holds a reference to the pool for its lifetime. Callbacks are still
+		/// Pool the client's IO runs on; when unset, the process-wide CIoPool::Default() is used,
+		/// so all default-configured clients and servers share one set of IO threads. The client
+		/// holds a reference to its pool for its lifetime and never stops it. Callbacks are
 		/// delivered via this client's own single-threaded workqueue, so a slow callback never
 		/// stalls the shared pool
 		CIoPoolPtr ioPool;
