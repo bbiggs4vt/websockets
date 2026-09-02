@@ -168,10 +168,6 @@ class CWebsocketServer
 		uint16_t idleTimeoutS;
 		/// Whether or not the server will ping the client when idle (also enables idleTimeoutS)
 		bool enablePings;
-		/// @deprecated No effect: IO threads come from ioPool (CIoPool::Default() when unset).
-		/// Retained for source compatibility
-		/// @note CClientCallbacks are *always* pipelined through a single-threaded workqueue
-		int numThreads;
 		/// If set, used to establish a ssl session w/ clients
 		std::optional<sslcontext::ISslContextPtr> sslContext;
 		/// If true, clients will only be accepted if they successfully establish a ssl connection. If false
@@ -193,7 +189,7 @@ class CWebsocketServer
 		/// delivered via this server's own single-threaded workqueue
 		CIoPoolPtr ioPool;
 
-		/// Sets defaults for server settings { 30, 30, true, 1, (empty), false, (empty), StandardMaxOutstandingWrites, (new mutex), (empty) }
+		/// Sets defaults for server settings { 30, 30, true, (empty), false, (empty), StandardMaxOutstandingWrites, (new mutex), (empty) }
 		CServerSettings();
 	};
 	typedef std::shared_ptr<CServerSettings> CServerSettingsPtr;

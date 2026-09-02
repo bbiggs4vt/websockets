@@ -412,7 +412,6 @@ CWebsocketClient::CClientSettings::CClientSettings()
 	: handshakeTimeoutS(30)
 	, idleTimeoutS(30)
 	, enablePings(true)
-	, numThreads(1)
 	, sslContext()
 {
 }

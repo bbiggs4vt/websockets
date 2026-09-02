@@ -28,9 +28,6 @@ class CWebsocketClient
 		uint16_t idleTimeoutS;
 		/// Whether or not the server will ping the client when idle (also enables idleTimeoutS)
 		bool enablePings;
-		/// @deprecated No effect: IO threads come from ioPool (CIoPool::Default() when unset).
-		/// Retained for source compatibility
-		int numThreads;
 		/// If set, used to establish a ssl connection
 		boost::optional<sslcontext::ISslContextPtr> sslContext;
 		/// Pool the client's IO runs on; when unset, the process-wide CIoPool::Default() is used,
@@ -40,7 +37,7 @@ class CWebsocketClient
 		/// stalls the shared pool
 		CIoPoolPtr ioPool;
 
-		/// Creates ClientSettings with defaults (e.g. {30, 30, true, 1, (empty), (empty)})
+		/// Creates ClientSettings with defaults (e.g. {30, 30, true, (empty), (empty)})
 		CClientSettings();
 	};
 

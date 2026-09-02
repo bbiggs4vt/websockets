@@ -9,7 +9,7 @@ A basic C++ websocket client and server built on [Boost.Beast](https://www.boost
 - **Text and binary payloads** — `SendMessage` sends text frames, `SendContent` sends binary frames. The `shared_ptr` overload of `SendContent` avoids copying the payload. Sends are queued and written in order.
 - **Callbacks** — register connect, disconnect, text-message, and binary-content callbacks. Callbacks are invoked from IO threads; exceptions thrown by callbacks are caught and logged.
 - **Keep-alive / idle timeout** — with `enablePings` set (the default), a ping is sent after the connection has been idle for `idleTimeoutS / 2`, and the connection is dropped (with the disconnect callback fired) after `idleTimeoutS` of silence.
-- **Threaded IO** — the client runs its own `io_context` on `(numThreads + 1) * 2` threads.
+- **Threaded IO** — IO runs on a shared `CIoPool` (the process-wide default, or one supplied via settings); callbacks are delivered on the client's own single-threaded workqueue.
 
 ## Server features
 
@@ -42,8 +42,7 @@ the pool outlives it under normal destruction order. Callbacks are always delive
 on each instance's own single-threaded workqueue (never on pool threads), so one slow
 callback cannot stall shared IO — but blocking inside a callback still delays that
 instance's later callbacks, and the blocking `Connect(...)` must not be called from
-any callback of any instance sharing the pool. `numThreads` in the settings structs
-is retained for source compatibility but no longer has an effect.
+any callback of any instance sharing the pool.
 
 ## Layout
 

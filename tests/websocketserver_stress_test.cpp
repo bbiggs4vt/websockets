@@ -49,7 +49,6 @@ CWebsocketServer::CServerSettings ServerSettings()
 	CWebsocketServer::CServerSettings settings;
 	settings.handshakeTimeoutS = 5;
 	settings.idleTimeoutS = 30;
-	settings.numThreads = 2;
 	return settings;
 }
 
