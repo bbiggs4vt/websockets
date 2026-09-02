@@ -7,6 +7,7 @@ A basic C++ websocket client and server built on [Boost.Beast](https://www.boost
 - **Plain and TLS connections** — pass an `sslcontext::ISslContextPtr` in the settings to establish a `wss://` connection (with SNI and certificate verification via the system CA paths).
 - **Sync and async connect** — `Connect(...)` blocks until the handshake completes (bounded by `handshakeTimeoutS`); `AsyncConnect(...)` returns immediately and fires the connect callback on success.
 - **Text and binary payloads** — `SendMessage` sends text frames, `SendContent` sends binary frames. The `shared_ptr` overload of `SendContent` avoids copying the payload. Sends are queued and written in order.
+- **Custom handshake headers** — `SetHandshakeHeader`/`ClearHandshakeHeaders` add headers (e.g. `Authorization`, `Sec-WebSocket-Protocol`) to the upgrade request of subsequent connects.
 - **Callbacks** — register connect, disconnect, text-message, and binary-content callbacks. Callbacks are invoked from IO threads; exceptions thrown by callbacks are caught and logged.
 - **Keep-alive / idle timeout** — with `enablePings` set (the default), a ping is sent after the connection has been idle for `idleTimeoutS / 2`, and the connection is dropped (with the disconnect callback fired) after `idleTimeoutS` of silence.
 - **Threaded IO** — IO runs on a shared `CIoPool` (the process-wide default, or one supplied via settings); callbacks are delivered on the client's own single-threaded workqueue.

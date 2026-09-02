@@ -8,6 +8,7 @@
 #include <functional>
 #include <future>
 #include <iostream>
+#include <map>
 #include <mutex>
 #include <sstream>
 #include <thread>
@@ -78,12 +79,14 @@ class ISessionEvents
 };
 
 /// One websocket connection attempt/lifetime. A new session is created per Connect()
+typedef std::map<std::string, std::string> CHandshakeHeaders;
+
 class ISession
 {
   public:
 	virtual ~ISession() = default;
 	virtual void AsyncConnect(const std::string& host, size_t port, const std::string& resource,
-							  std::function<void(bool)> onComplete) = 0;
+							  CHandshakeHeaders handshakeHeaders, std::function<void(bool)> onComplete) = 0;
 	virtual void Send(SOutgoingMessage message) = 0;
 	virtual void Close() = 0;
 	virtual bool IsOpen() const = 0;
@@ -121,14 +124,16 @@ class CSession : public ISession, public std::enable_shared_from_this<CSession<T
 	}
 
 	void AsyncConnect(const std::string& host, size_t port, const std::string& resource,
-					  std::function<void(bool)> onComplete) override
+					  CHandshakeHeaders handshakeHeaders, std::function<void(bool)> onComplete) override
 	{
 		auto self = this->shared_from_this();
-		net::dispatch(mStrand, [self, host, port, resource, onComplete]() mutable {
+		net::dispatch(mStrand, [self, host, port, resource, handshakeHeaders = std::move(handshakeHeaders),
+								onComplete]() mutable {
 			self->mHost = host;
 			self->mPort = port;
 			self->mResource = resource.empty() ? DEFAULT_RESOURCE : resource;
 			self->mHostHeader = host + ":" + std::to_string(port);
+			self->mHandshakeHeaders = std::move(handshakeHeaders);
 			self->mOnConnectComplete = std::move(onComplete);
 			self->mResolver.async_resolve(self->mHost, std::to_string(self->mPort),
 										  beast::bind_front_handler(&CSession::OnResolve, self));
@@ -244,10 +249,15 @@ class CSession : public ISession, public std::enable_shared_from_this<CSession<T
 			timeoutOptions.keep_alive_pings = false;
 		}
 		mWs.set_option(timeoutOptions);
-		mWs.set_option(websocket::stream_base::decorator([](websocket::request_type& request) {
-			request.set(beast::http::field::user_agent,
-						std::string(BOOST_BEAST_VERSION_STRING) + " CWebsocketClient");
-		}));
+		mWs.set_option(websocket::stream_base::decorator(
+			[headers = mHandshakeHeaders](websocket::request_type& request) {
+				request.set(beast::http::field::user_agent,
+							std::string(BOOST_BEAST_VERSION_STRING) + " CWebsocketClient");
+				for (const auto& header : headers)
+				{
+					request.set(header.first, header.second);
+				}
+			}));
 
 		mWs.async_handshake(mHostHeader, mResource,
 							beast::bind_front_handler(&CSession::OnWebsocketHandshake, this->shared_from_this()));
@@ -395,6 +405,7 @@ class CSession : public ISession, public std::enable_shared_from_this<CSession<T
 	size_t mPort = DEFAULT_PORT;
 	std::string mResource;
 	std::string mHostHeader;
+	CHandshakeHeaders mHandshakeHeaders;
 	std::function<void(bool)> mOnConnectComplete;
 
 	std::atomic<bool> mOpen{false};
@@ -538,6 +549,18 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 		session->Send(std::move(message));
 	}
 
+	void SetHandshakeHeader(const std::string& name, const std::string& value)
+	{
+		std::lock_guard<std::mutex> lock(mCallbackMutex);
+		mHandshakeHeaders[name] = value;
+	}
+
+	void ClearHandshakeHeaders()
+	{
+		std::lock_guard<std::mutex> lock(mCallbackMutex);
+		mHandshakeHeaders.clear();
+	}
+
 	void RegisterConnectCallback(boost::function<void(void)> cb)
 	{
 		std::lock_guard<std::mutex> lock(mCallbackMutex);
@@ -619,6 +642,11 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 	void DoConnect(const std::string& host, size_t port, const std::string& resource,
 				   std::function<void(bool)> onComplete)
 	{
+		CHandshakeHeaders handshakeHeaders;
+		{
+			std::lock_guard<std::mutex> lock(mCallbackMutex);
+			handshakeHeaders = mHandshakeHeaders;
+		}
 		auto session = CreateSession();
 		{
 			std::lock_guard<std::mutex> lock(mSessionMutex);
@@ -633,7 +661,8 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 		// capture the session strongly or the session would leak if the
 		// client shuts down before the connect completes
 		std::weak_ptr<ISession> weakSession = session;
-		session->AsyncConnect(host, port, resource, [weakSelf, weakSession, onComplete](bool success) {
+		session->AsyncConnect(host, port, resource, std::move(handshakeHeaders),
+							  [weakSelf, weakSession, onComplete](bool success) {
 			if (auto self = weakSelf.lock())
 			{
 				if (success)
@@ -721,6 +750,7 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 	std::shared_ptr<ISession> mSession;
 
 	std::mutex mCallbackMutex;
+	CHandshakeHeaders mHandshakeHeaders;
 	boost::function<void(void)> mOnConnect;
 	boost::function<void(void)> mOnDisconnect;
 	boost::function<void(const std::string&)> mOnMessage;
@@ -836,6 +866,16 @@ void CWebsocketClient::SendContent(const std::shared_ptr<std::vector<uint8_t>>& 
 	outgoing.isText = false;
 	outgoing.binary = content;
 	mImpl->Send(std::move(outgoing));
+}
+
+void CWebsocketClient::SetHandshakeHeader(const std::string& name, const std::string& value)
+{
+	mImpl->SetHandshakeHeader(name, value);
+}
+
+void CWebsocketClient::ClearHandshakeHeaders()
+{
+	mImpl->ClearHandshakeHeaders();
 }
 
 void CWebsocketClient::RegisterConnectCallback(boost::function<void(void)> cb)

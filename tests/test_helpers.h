@@ -5,12 +5,15 @@
 #include <functional>
 #include <future>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
 #include <boost/beast/websocket.hpp>
 
 namespace testhelpers
@@ -87,6 +90,13 @@ class CEchoServer
 		return mPort;
 	}
 
+	/// @return the headers of the most recent websocket handshake request received
+	std::map<std::string, std::string> LastHandshakeHeaders()
+	{
+		std::lock_guard<std::mutex> lock(mHeadersMutex);
+		return mLastHandshakeHeaders;
+	}
+
   private:
 	void Run()
 	{
@@ -114,10 +124,26 @@ class CEchoServer
 		}
 	}
 
-	static void HandleConnection(tcp::socket socket)
+	void HandleConnection(tcp::socket socket)
 	{
+		// Read the upgrade request ourselves so tests can inspect its headers
+		beast::flat_buffer requestBuffer;
+		boost::beast::http::request<boost::beast::http::string_body> request;
+		boost::beast::http::read(socket, requestBuffer, request);
+		if (!websocket::is_upgrade(request))
+		{
+			return;
+		}
+		{
+			std::lock_guard<std::mutex> lock(mHeadersMutex);
+			mLastHandshakeHeaders.clear();
+			for (const auto& field : request)
+			{
+				mLastHandshakeHeaders[std::string(field.name_string())] = std::string(field.value());
+			}
+		}
 		websocket::stream<tcp::socket> ws(std::move(socket));
-		ws.accept();
+		ws.accept(request);
 		beast::flat_buffer buffer;
 		for (;;)
 		{
@@ -137,6 +163,8 @@ class CEchoServer
 	tcp::acceptor mAcceptor;
 	uint16_t mPort = 0;
 	std::atomic<bool> mStopped{false};
+	std::mutex mHeadersMutex;
+	std::map<std::string, std::string> mLastHandshakeHeaders;
 	std::thread mThread;
 };
 

@@ -87,6 +87,16 @@ class CWebsocketClient
 	void SendContent(const std::vector<uint8_t>& content);
 	/// Sends a binary payload to the server
 	void SendContent(const std::shared_ptr<std::vector<uint8_t>>& content);
+	/// Sets a header included in the websocket handshake (upgrade) request of subsequent
+	/// Connect/AsyncConnect calls (e.g. "Authorization", "Sec-WebSocket-Protocol"). Setting a
+	/// header again replaces its value; names are used verbatim, so use consistent casing.
+	/// Headers are applied after the standard upgrade fields - overriding protocol-critical
+	/// fields (Host, Upgrade, Connection, Sec-WebSocket-*) may break the handshake
+	/// @param[in] name header name
+	/// @param[in] value header value
+	void SetHandshakeHeader(const std::string& name, const std::string& value);
+	/// Removes all headers previously set via SetHandshakeHeader
+	void ClearHandshakeHeaders();
 	/// @note Callbacks are delivered via a single-threaded workqueue and will not occur concurrently
 	/// @param[in] cb called when this client connects/is connected to the server
 	void RegisterConnectCallback(boost::function<void(void)> cb);

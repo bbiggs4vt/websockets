@@ -73,6 +73,50 @@ BOOST_AUTO_TEST_CASE(HappyPath, *utf::timeout(60))
 	BOOST_CHECK(!client.IsConnected());
 }
 
+// Custom handshake headers appear on the upgrade request; clearing removes them
+BOOST_AUTO_TEST_CASE(HandshakeHeaders, *utf::timeout(60))
+{
+	CEchoServer server;
+	CWebsocketClient client("hdr_client", TestSettings());
+
+	std::promise<std::string> echoed;
+	std::promise<void> disconnected;
+	client.RegisterMessageCallback([&echoed](const std::string& m) { echoed.set_value(m); });
+	client.RegisterDisconnectCallback([&disconnected]() { disconnected.set_value(); });
+
+	client.SetHandshakeHeader("Authorization", "Bearer token-123");
+	client.SetHandshakeHeader("X-Custom-Header", "first");
+	client.SetHandshakeHeader("X-Custom-Header", "custom-value"); // replaces the first value
+	BOOST_REQUIRE(client.Connect("127.0.0.1", server.Port(), "/"));
+
+	auto headers = server.LastHandshakeHeaders();
+	BOOST_REQUIRE(headers.count("Authorization"));
+	BOOST_CHECK_EQUAL(headers.at("Authorization"), "Bearer token-123");
+	BOOST_REQUIRE(headers.count("X-Custom-Header"));
+	BOOST_CHECK_EQUAL(headers.at("X-Custom-Header"), "custom-value");
+	// The standard upgrade fields are still intact alongside the custom ones
+	BOOST_CHECK(headers.count("Sec-WebSocket-Key"));
+	BOOST_CHECK(headers.count("Host"));
+
+	// The connection works normally with custom headers
+	client.SendMessage("with-headers");
+	auto echoedFuture = echoed.get_future();
+	BOOST_REQUIRE(WaitFor(echoedFuture));
+	BOOST_CHECK_EQUAL(echoedFuture.get(), "with-headers");
+
+	client.Close();
+	auto disconnectedFuture = disconnected.get_future();
+	BOOST_REQUIRE(WaitFor(disconnectedFuture));
+
+	// After clearing, a reconnect carries none of the custom headers
+	client.ClearHandshakeHeaders();
+	BOOST_REQUIRE(client.Connect("127.0.0.1", server.Port(), "/"));
+	headers = server.LastHandshakeHeaders();
+	BOOST_CHECK(!headers.count("Authorization"));
+	BOOST_CHECK(!headers.count("X-Custom-Header"));
+	client.Close();
+}
+
 // Nothing listening on the target port
 BOOST_AUTO_TEST_CASE(FailedConnect, *utf::timeout(60))
 {
