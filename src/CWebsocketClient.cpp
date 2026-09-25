@@ -671,11 +671,17 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 				}
 				else
 				{
-					std::lock_guard<std::mutex> lock(self->mSessionMutex);
-					if (!self->mSession.owner_before(weakSession) && !weakSession.owner_before(self->mSession))
 					{
-						self->mSession.reset();
+						std::lock_guard<std::mutex> lock(self->mSessionMutex);
+						if (!self->mSession.owner_before(weakSession) &&
+							!weakSession.owner_before(self->mSession))
+						{
+							self->mSession.reset();
+						}
 					}
+					// A failed connect attempt signals the disconnect callback, so
+					// reconnect logic can key off a single callback
+					self->OnSessionDisconnect();
 				}
 			}
 			if (onComplete)

@@ -100,7 +100,9 @@ class CWebsocketClient
 	/// @note Callbacks are delivered via a single-threaded workqueue and will not occur concurrently
 	/// @param[in] cb called when this client connects/is connected to the server
 	void RegisterConnectCallback(boost::function<void(void)> cb);
-	/// @param[in] cb called when this client disconnects/is disconnected from the server
+	/// @param[in] cb called when this client disconnects/is disconnected from the server, and
+	///            when a connect attempt fails (Connect returning false or AsyncConnect not
+	///            establishing), so reconnect logic can key off this single callback
 	void RegisterDisconnectCallback(boost::function<void(void)> cb);
 	/// @param[in] cb called when this client receives a text payload from the server
 	void RegisterMessageCallback(boost::function<void(const std::string&)> cb);

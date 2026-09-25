@@ -117,13 +117,25 @@ BOOST_AUTO_TEST_CASE(HandshakeHeaders, *utf::timeout(60))
 	client.Close();
 }
 
-// Nothing listening on the target port
+// Nothing listening on the target port; failed attempts signal the disconnect callback
 BOOST_AUTO_TEST_CASE(FailedConnect, *utf::timeout(60))
 {
 	CWebsocketClient::CClientSettings settings;
 	settings.handshakeTimeoutS = 3;
 	CWebsocketClient client("test_client_fail", settings);
+
+	std::atomic<int> disconnects{0};
+	client.RegisterDisconnectCallback([&disconnects]() { ++disconnects; });
+
 	BOOST_CHECK(!client.Connect("127.0.0.1", 1, "/"));
+	BOOST_CHECK(!client.IsConnected());
+	BOOST_CHECK_MESSAGE(testhelpers::PollUntil([&]() { return disconnects == 1; }),
+						"failed sync Connect signalled the disconnect callback");
+
+	// AsyncConnect failures signal it too - the only async failure notification
+	client.AsyncConnect("127.0.0.1", 1, "/");
+	BOOST_CHECK_MESSAGE(testhelpers::PollUntil([&]() { return disconnects == 2; }),
+						"failed AsyncConnect signalled the disconnect callback");
 	BOOST_CHECK(!client.IsConnected());
 }
 
