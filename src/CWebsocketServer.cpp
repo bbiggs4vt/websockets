@@ -1134,6 +1134,11 @@ class CWebsocketServer::CImpl : public IServerEvents, public std::enable_shared_
 	void DoAccept(const std::shared_ptr<tcp::acceptor>& acceptor)
 	{
 		std::weak_ptr<CImpl> weakSelf = shared_from_this();
+		// Each connection gets its own strand. Beyond serializing our handlers,
+		// this guards Beast's idle-ping machinery (boost <= 1.83 increments
+		// idle_counter after launching the ping op; unstranded multi-threaded
+		// execution can process the pong inside that window and falsely time
+		// the connection out on the next expiry)
 		acceptor->async_accept(net::make_strand(mPool->Context()),
 							   [weakSelf, acceptor](beast::error_code ec, tcp::socket socket) {
 								   auto self = weakSelf.lock();

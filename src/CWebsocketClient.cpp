@@ -93,7 +93,14 @@ class ISession
 };
 
 /// Session templated on the websocket stream type (plain TCP or TLS).
-/// All stream access happens on mStrand; only mOpen is touched cross-thread
+/// All stream access happens on mStrand; only mOpen is touched cross-thread.
+/// @note The strand is load-bearing beyond our own handlers: Beast's internal
+///       idle-ping machinery (boost <= 1.83, stream_impl.hpp timeout_handler)
+///       increments idle_counter only AFTER launching the ping op, so on an
+///       unstranded multi-threaded io_context a fast pong can be processed in
+///       that window and the next timer expiry falsely closes the connection
+///       with a timeout. The strand serializes the timer handler against the
+///       read ops, making that interleaving impossible
 template <class TStream>
 class CSession : public ISession, public std::enable_shared_from_this<CSession<TStream>>
 {

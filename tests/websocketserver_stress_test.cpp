@@ -416,3 +416,44 @@ BOOST_AUTO_TEST_CASE(SlowConsumerBacklogCap, *utf::timeout(120))
 	BOOST_CHECK_MESSAGE(survived, "connection survived the backlog flood");
 	BOOST_CHECK(server.ClientsConnected());
 }
+
+// Canary for the Beast idle_counter race (boost <= 1.83): on an unstranded
+// multi-threaded io_context, a localhost pong can land between idle_ping_op and
+// ++idle_counter in timeout_handler, and the next expiry falsely times the
+// connection out. Our strand-per-session design prevents it; this holds idle
+// connections across many ping cycles on a multi-threaded pool to prove it
+BOOST_AUTO_TEST_CASE(IdlePingCyclesSurviveMultithreadedPool, *utf::timeout(60))
+{
+	auto pool = std::make_shared<websocketclient::CIoPool>(8);
+
+	auto serverSettings = ServerSettings();
+	serverSettings.idleTimeoutS = 2; // ping every second
+	serverSettings.ioPool = pool;
+	CWebsocketServer server("stress_idle_ping", serverSettings);
+
+	std::atomic<int> serverCloses{0};
+	CWebsocketServer::CClientCallbacks callbacks;
+	callbacks.mOnClientClosedCb = [&](uint32_t) { ++serverCloses; };
+	server.Start(static_cast<unsigned short>(0), callbacks);
+
+	auto clientSettings = ClientSettings();
+	clientSettings.idleTimeoutS = 2;
+	clientSettings.ioPool = pool;
+
+	const int PAIRS = 8;
+	std::atomic<int> clientDisconnects{0};
+	std::vector<std::unique_ptr<CWebsocketClient>> clients;
+	for (int i = 0; i < PAIRS; ++i)
+	{
+		clients.push_back(std::make_unique<CWebsocketClient>("idle_ping_client", clientSettings));
+		clients.back()->RegisterDisconnectCallback([&]() { ++clientDisconnects; });
+		BOOST_REQUIRE(clients.back()->Connect("127.0.0.1", server.Port(), "/"));
+	}
+
+	// ~5 ping/pong cycles per direction per pair with zero application traffic
+	std::this_thread::sleep_for(std::chrono::seconds(10));
+
+	BOOST_CHECK_EQUAL(serverCloses, 0);
+	BOOST_CHECK_EQUAL(clientDisconnects, 0);
+	BOOST_CHECK_EQUAL(server.GetConnectedClientIds().size(), static_cast<size_t>(PAIRS));
+}
