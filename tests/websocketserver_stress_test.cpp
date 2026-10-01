@@ -457,3 +457,54 @@ BOOST_AUTO_TEST_CASE(IdlePingCyclesSurviveMultithreadedPool, *utf::timeout(60))
 	BOOST_CHECK_EQUAL(clientDisconnects, 0);
 	BOOST_CHECK_EQUAL(server.GetConnectedClientIds().size(), static_cast<size_t>(PAIRS));
 }
+
+// Timeout semantics: a nonzero idle timeout auto-disconnects even with pings
+// disabled, and idleTimeoutS=0 disables idle auto-disconnect entirely
+BOOST_AUTO_TEST_CASE(TimeoutDisableSemantics, *utf::timeout(60))
+{
+	auto quietClientSettings = ClientSettings();
+	quietClientSettings.idleTimeoutS = 0; // the client side must not interfere
+	quietClientSettings.enablePings = false;
+
+	// (a) idle timeout enforced without pings: a silent (healthy) client is
+	// dropped at ~idleTimeoutS because nothing ever resets the server's timer
+	{
+		auto serverSettings = ServerSettings();
+		serverSettings.idleTimeoutS = 2;
+		serverSettings.enablePings = false;
+		CWebsocketServer server("idle_no_pings", serverSettings);
+		std::promise<void> closed;
+		CWebsocketServer::CClientCallbacks callbacks;
+		callbacks.mOnClientClosedCb = [&](uint32_t) { closed.set_value(); };
+		server.Start(static_cast<unsigned short>(0), callbacks);
+
+		CWebsocketClient client("quiet_client", quietClientSettings);
+		std::promise<void> disconnected;
+		client.RegisterDisconnectCallback([&]() { disconnected.set_value(); });
+		BOOST_REQUIRE(client.Connect("127.0.0.1", server.Port(), "/"));
+
+		auto closedFuture = closed.get_future();
+		BOOST_CHECK_MESSAGE(WaitFor(closedFuture), "idle client dropped despite pings being disabled");
+		auto disconnectedFuture = disconnected.get_future();
+		BOOST_CHECK(WaitFor(disconnectedFuture));
+	}
+
+	// (b) idleTimeoutS=0 disables idle auto-disconnect: total silence in both
+	// directions and the connection stays up
+	{
+		auto serverSettings = ServerSettings();
+		serverSettings.idleTimeoutS = 0;
+		serverSettings.enablePings = false;
+		CWebsocketServer server("idle_disabled", serverSettings);
+		server.Start(static_cast<unsigned short>(0), CWebsocketServer::CClientCallbacks());
+
+		CWebsocketClient client("quiet_client2", quietClientSettings);
+		std::atomic<bool> disconnected{false};
+		client.RegisterDisconnectCallback([&]() { disconnected = true; });
+		BOOST_REQUIRE(client.Connect("127.0.0.1", server.Port(), "/"));
+
+		std::this_thread::sleep_for(std::chrono::seconds(3));
+		BOOST_CHECK_MESSAGE(!disconnected && client.IsConnected() && server.ClientsConnected(),
+							"connection survived total silence with idle timeout disabled");
+	}
+}

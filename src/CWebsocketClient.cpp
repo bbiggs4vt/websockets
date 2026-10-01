@@ -195,7 +195,14 @@ class CSession : public ISession, public std::enable_shared_from_this<CSession<T
 			return;
 		}
 		// Covers the TCP connect and (for TLS) the ssl handshake below
-		beast::get_lowest_layer(mWs).expires_after(std::chrono::seconds(mSettings.handshakeTimeoutS));
+		if (mSettings.handshakeTimeoutS)
+		{
+			beast::get_lowest_layer(mWs).expires_after(std::chrono::seconds(mSettings.handshakeTimeoutS));
+		}
+		else
+		{
+			beast::get_lowest_layer(mWs).expires_never();
+		}
 		beast::get_lowest_layer(mWs).async_connect(results,
 												   beast::bind_front_handler(&CSession::OnTcpConnect,
 																			 this->shared_from_this()));
@@ -242,19 +249,18 @@ class CSession : public ISession, public std::enable_shared_from_this<CSession<T
 		// The websocket stream manages timeouts from here on
 		beast::get_lowest_layer(mWs).expires_never();
 
+		// 0 disables the respective timeout; enablePings only controls keep-alive
+		// pings (a nonzero idle timeout auto-disconnects either way)
 		websocket::stream_base::timeout timeoutOptions{};
-		timeoutOptions.handshake_timeout = std::chrono::seconds(mSettings.handshakeTimeoutS);
-		if (mSettings.enablePings)
-		{
-			// Beast pings after idle_timeout/2 with no traffic, and disconnects at idle_timeout
-			timeoutOptions.idle_timeout = std::chrono::seconds(mSettings.idleTimeoutS);
-			timeoutOptions.keep_alive_pings = true;
-		}
-		else
-		{
-			timeoutOptions.idle_timeout = websocket::stream_base::none();
-			timeoutOptions.keep_alive_pings = false;
-		}
+		timeoutOptions.handshake_timeout =
+			mSettings.handshakeTimeoutS
+				? websocket::stream_base::duration(std::chrono::seconds(mSettings.handshakeTimeoutS))
+				: websocket::stream_base::none();
+		timeoutOptions.idle_timeout =
+			mSettings.idleTimeoutS
+				? websocket::stream_base::duration(std::chrono::seconds(mSettings.idleTimeoutS))
+				: websocket::stream_base::none();
+		timeoutOptions.keep_alive_pings = mSettings.enablePings;
 		mWs.set_option(timeoutOptions);
 		mWs.set_option(websocket::stream_base::decorator(
 			[headers = mHandshakeHeaders](websocket::request_type& request) {
@@ -496,12 +502,20 @@ class CWebsocketClient::CImpl : public ISessionEvents, public std::enable_shared
 		std::future<bool> future = result->get_future();
 		DoConnect(host, port, resource, [result](bool success) { result->set_value(success); });
 		// The handshake timeouts bound each connect stage; this outer wait only
-		// guards against a stuck resolver so a synchronous call can never hang
-		const auto safetyTimeout = std::chrono::seconds(mSettings.handshakeTimeoutS * 3 + 5);
-		if (future.wait_for(safetyTimeout) != std::future_status::ready)
+		// guards against a stuck resolver so a synchronous call can never hang.
+		// With the handshake timeout disabled (0), wait as long as the connect takes
+		if (mSettings.handshakeTimeoutS == 0)
 		{
-			LogError("Connect timed out");
-			return false;
+			future.wait();
+		}
+		else
+		{
+			const auto safetyTimeout = std::chrono::seconds(mSettings.handshakeTimeoutS * 3 + 5);
+			if (future.wait_for(safetyTimeout) != std::future_status::ready)
+			{
+				LogError("Connect timed out");
+				return false;
+			}
 		}
 		try
 		{

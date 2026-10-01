@@ -22,11 +22,15 @@ class CWebsocketClient
 	struct CClientSettings
 	{
 		/// How many seconds the client/server are allowed to complete the websocket handshake
+		/// (also bounds the TCP connect and ssl handshake; 0 disables these timeouts)
 		uint16_t handshakeTimeoutS;
-		/// How many seconds the server's connection may be idle before auto-disconnected. Auto-disconnect is disabled if enablePings is false
-		/// @note If no content is received from the server, a ping will be sent if the connection has been idle for the idleTimeoutS/2
+		/// How many seconds the server's connection may be idle before auto-disconnect
+		/// (0 disables idle auto-disconnect)
+		/// @note With enablePings set, a ping is sent once the connection has been idle for idleTimeoutS/2
 		uint16_t idleTimeoutS;
-		/// Whether or not the server will ping the client when idle (also enables idleTimeoutS)
+		/// Whether keep-alive pings are sent when the connection is idle (pings only occur when
+		/// idleTimeoutS is nonzero). With pings disabled, a nonzero idleTimeoutS still
+		/// auto-disconnects an idle connection
 		bool enablePings;
 		/// If set, used to establish a ssl connection
 		boost::optional<sslcontext::ISslContextPtr> sslContext;

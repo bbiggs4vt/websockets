@@ -205,20 +205,20 @@ class CWsSession : public IWsSession, public std::enable_shared_from_this<CWsSes
 	{
 		mTarget = std::string(request.target());
 
-		// The websocket stream manages timeouts from here on
+		// The websocket stream manages timeouts from here on. 0 disables the
+		// respective timeout; enablePings only controls keep-alive pings (a
+		// nonzero idle timeout auto-disconnects either way)
 		beast::get_lowest_layer(mWs).expires_never();
 		websocket::stream_base::timeout timeoutOptions{};
-		timeoutOptions.handshake_timeout = std::chrono::seconds(mSettings.handshakeTimeoutS);
-		if (mSettings.enablePings)
-		{
-			timeoutOptions.idle_timeout = std::chrono::seconds(mSettings.idleTimeoutS);
-			timeoutOptions.keep_alive_pings = true;
-		}
-		else
-		{
-			timeoutOptions.idle_timeout = websocket::stream_base::none();
-			timeoutOptions.keep_alive_pings = false;
-		}
+		timeoutOptions.handshake_timeout =
+			mSettings.handshakeTimeoutS
+				? websocket::stream_base::duration(std::chrono::seconds(mSettings.handshakeTimeoutS))
+				: websocket::stream_base::none();
+		timeoutOptions.idle_timeout =
+			mSettings.idleTimeoutS
+				? websocket::stream_base::duration(std::chrono::seconds(mSettings.idleTimeoutS))
+				: websocket::stream_base::none();
+		timeoutOptions.keep_alive_pings = mSettings.enablePings;
 		mWs.set_option(timeoutOptions);
 		mWs.set_option(websocket::stream_base::decorator([](websocket::response_type& response) {
 			response.set(http::field::server, std::string(BOOST_BEAST_VERSION_STRING) + " CWebsocketServer");
@@ -451,7 +451,7 @@ class CHttpConnection : public std::enable_shared_from_this<CHttpConnection<TStr
 	{
 		if constexpr (IS_SSL)
 		{
-			beast::get_lowest_layer(mStream).expires_after(std::chrono::seconds(mSettings.handshakeTimeoutS));
+			SetRequestExpiry();
 			auto self = this->shared_from_this();
 			mStream.async_handshake(ssl::stream_base::server, mBuffer.data(),
 									[self](beast::error_code ec, size_t bytesUsed) {
@@ -475,7 +475,7 @@ class CHttpConnection : public std::enable_shared_from_this<CHttpConnection<TStr
 	{
 		mParser.emplace();
 		mParser->body_limit(HTTP_BODY_LIMIT);
-		beast::get_lowest_layer(mStream).expires_after(std::chrono::seconds(mSettings.handshakeTimeoutS));
+		SetRequestExpiry();
 		http::async_read(mStream, mBuffer, *mParser,
 						 beast::bind_front_handler(&CHttpConnection::OnRead, this->shared_from_this()));
 	}
@@ -584,7 +584,7 @@ class CHttpConnection : public std::enable_shared_from_this<CHttpConnection<TStr
 
 	void DoWrite(const std::shared_ptr<CHttpResponse>& response)
 	{
-		beast::get_lowest_layer(mStream).expires_after(std::chrono::seconds(mSettings.handshakeTimeoutS));
+		SetRequestExpiry();
 		auto self = this->shared_from_this();
 		http::async_write(mStream, *response, [self, response](beast::error_code ec, size_t) {
 			if (ec)
@@ -614,6 +614,19 @@ class CHttpConnection : public std::enable_shared_from_this<CHttpConnection<TStr
 		{
 			beast::error_code ec;
 			mStream.socket().shutdown(tcp::socket::shutdown_send, ec);
+		}
+	}
+
+	/// Bounds the next handshake/request/response IO by handshakeTimeoutS (0 = no deadline)
+	void SetRequestExpiry()
+	{
+		if (mSettings.handshakeTimeoutS)
+		{
+			beast::get_lowest_layer(mStream).expires_after(std::chrono::seconds(mSettings.handshakeTimeoutS));
+		}
+		else
+		{
+			beast::get_lowest_layer(mStream).expires_never();
 		}
 	}
 
@@ -655,7 +668,10 @@ class CDetectSession : public std::enable_shared_from_this<CDetectSession>
 
 	void Run()
 	{
-		mStream.expires_after(std::chrono::seconds(mSettings.handshakeTimeoutS));
+		if (mSettings.handshakeTimeoutS)
+		{
+			mStream.expires_after(std::chrono::seconds(mSettings.handshakeTimeoutS));
+		}
 		auto self = shared_from_this();
 		beast::async_detect_ssl(mStream, mBuffer, [self](beast::error_code ec, bool isSsl) {
 			if (ec)
