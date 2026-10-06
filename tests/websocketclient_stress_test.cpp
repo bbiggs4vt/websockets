@@ -373,3 +373,72 @@ BOOST_AUTO_TEST_CASE(SendWithoutConnection, *utf::timeout(60))
 	client.SendContent(std::shared_ptr<std::vector<uint8_t>>()); // null payload
 	BOOST_CHECK(!client.IsConnected());
 }
+
+// Sending from inside the receive callback is a supported pattern: each received
+// echo triggers the next send, ping-ponging through the echo server
+BOOST_AUTO_TEST_CASE(SendFromReceiveCallback, *utf::timeout(60))
+{
+	CEchoServer server;
+	CWebsocketClient client("stress_cb_send", FastSettings());
+
+	const int TARGET_HOPS = 25;
+	std::atomic<int> hops{0};
+	std::promise<void> done;
+	client.RegisterMessageCallback([&](const std::string&) {
+		const int hop = ++hops;
+		if (hop < TARGET_HOPS)
+		{
+			client.SendMessage("hop-" + std::to_string(hop));
+		}
+		else if (hop == TARGET_HOPS)
+		{
+			done.set_value();
+		}
+	});
+
+	BOOST_REQUIRE(client.Connect("127.0.0.1", server.Port(), "/"));
+	client.SendMessage("hop-0");
+	auto doneFuture = done.get_future();
+	BOOST_REQUIRE_MESSAGE(WaitFor(doneFuture), "callback-driven ping-pong completed");
+	BOOST_CHECK(client.IsConnected());
+	client.Close();
+}
+
+// Sends issued from the receive callback while the client is closing (or already
+// closed/destroyed) and received frames are still draining through the workqueue
+// must be dropped harmlessly: no deadlock, crash, or use-after-free
+BOOST_AUTO_TEST_CASE(SendFromReceiveCallbackWhileClosing, *utf::timeout(120))
+{
+	BOOST_TEST_MESSAGE("\"Cannot send\"/\"Send dropped\" errors on stderr are expected here");
+	for (int iteration = 0; iteration < 10; ++iteration)
+	{
+		CEchoServer server;
+		std::atomic<int> received{0};
+		{
+			CWebsocketClient client("stress_cb_close", FastSettings());
+			client.RegisterMessageCallback([&](const std::string&) {
+				++received;
+				// Every receipt replies, so echoes keep traffic flowing until the
+				// close cuts it off mid-stream; late replies hit a closing or
+				// closed session
+				client.SendMessage("reply");
+			});
+			BOOST_REQUIRE(client.Connect("127.0.0.1", server.Port(), "/"));
+			for (int i = 0; i < 25; ++i)
+			{
+				client.SendMessage("seed-" + std::to_string(i));
+			}
+			// Let the echo/reply loop get going, then close while it's in full flight
+			BOOST_REQUIRE_MESSAGE(PollUntil([&]() { return received >= 5; }),
+								  "echo loop running on iteration " + std::to_string(iteration));
+			client.Close();
+			if (iteration % 2 == 1)
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(iteration));
+			}
+			// Destructor runs here while callbacks may still be draining received
+			// frames and issuing sends
+		}
+	}
+	BOOST_CHECK_MESSAGE(true, "survived 10 close/destroy cycles with sends from the receive callback");
+}
