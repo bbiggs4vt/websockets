@@ -54,7 +54,9 @@ class CWebsocketClient
 	/// @param[in] name identifier for debugging
 	/// @param[in] settings client settings to use
 	CWebsocketClient(const std::string& name, const CClientSettings& settings);
-	/// Destructor. Disconnects from the server (if connected) and stops all IO threads
+	/// Destructor. Disconnects from the server (if connected) and stops all callback/IO
+	/// delivery. This is the callback barrier: it waits for a callback already executing,
+	/// discards undelivered events, and guarantees no callback runs after it returns
 	~CWebsocketClient();
 
 	/// @see Connect(...)
@@ -84,6 +86,10 @@ class CWebsocketClient
 	/// @return true if client believes it's connected to server
 	bool IsConnected() const;
 	/// Instructs client to disconnect from server. May be called multiple times
+	/// @note Asynchronous, and NOT a callback barrier: events already queued are still
+	///       delivered after Close() returns, and the disconnect callback fires once the
+	///       close completes. Only the destructor guarantees no further callbacks, so
+	///       destroy the client before tearing down state its callbacks touch
 	void Close();
 	/// Sends a text payload to the server
 	void SendMessage(const std::string& message);

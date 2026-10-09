@@ -14,10 +14,12 @@ namespace websocketclient
 namespace detail
 {
 
-/// Runs posted functions in order on one dedicated thread. Stop() drains
-/// already-posted work before joining, so a caller returning from Stop() knows
-/// no further callbacks will run (unless Stop() was called from the worker
-/// thread itself, in which case the worker is detached to avoid self-join)
+/// Runs posted functions in order on one dedicated thread. Stop() waits for the
+/// currently-executing function to finish and DISCARDS any not yet started, so a
+/// caller returning from Stop() knows no further callbacks will run and no stale
+/// events get delivered into an object mid-destruction (unless Stop() was called
+/// from the worker thread itself, in which case the worker is detached to avoid
+/// self-join)
 class CWorkQueue
 {
   public:
@@ -44,7 +46,8 @@ class CWorkQueue
 		mCondition.notify_one();
 	}
 
-	/// Stops the queue after draining already-posted work
+	/// Stops the queue: discards undelivered work, then joins (the in-flight
+	/// function, if any, completes first)
 	void Stop()
 	{
 		{
@@ -54,6 +57,7 @@ class CWorkQueue
 				return;
 			}
 			mStopped = true;
+			mQueue.clear();
 		}
 		mCondition.notify_one();
 		if (mThread.joinable())
@@ -78,9 +82,9 @@ class CWorkQueue
 			{
 				std::unique_lock<std::mutex> lock(mMutex);
 				mCondition.wait(lock, [this]() { return mStopped || !mQueue.empty(); });
-				if (mQueue.empty())
+				if (mStopped)
 				{
-					return; // stopped and drained
+					return;
 				}
 				fn = std::move(mQueue.front());
 				mQueue.pop_front();

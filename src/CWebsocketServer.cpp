@@ -804,8 +804,9 @@ class CWebsocketServer::CImpl : public IServerEvents, public std::enable_shared_
 			return;
 		}
 		Stop();
-		// The (shared) pool keeps running; closed sessions wind down asynchronously
-		// and their events are dropped once the queue stops
+		// The (shared) pool keeps running; closed sessions wind down asynchronously.
+		// Stopping the queue waits for an in-flight callback and discards undelivered
+		// events, so no callback runs after Shutdown returns
 		mWorkQueue.Stop();
 	}
 

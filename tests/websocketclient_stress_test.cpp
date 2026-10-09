@@ -265,6 +265,41 @@ BOOST_AUTO_TEST_CASE(ShutdownDuringMessageCallback, *utf::timeout(60))
 	BOOST_CHECK_MESSAGE(callbackFinished, "destructor waited for in-flight message callback");
 }
 
+// The destructor is the callback barrier: it waits for the one callback already
+// executing and DISCARDS events still queued behind it, so teardown never
+// delivers stale messages into an object mid-destruction
+BOOST_AUTO_TEST_CASE(DestructorDiscardsQueuedCallbacks, *utf::timeout(60))
+{
+	CEchoServer server;
+
+	std::atomic<int> callbackCount{0};
+	std::promise<void> firstCallbackEntered;
+	{
+		CWebsocketClient client("stress_discard", FastSettings());
+		client.RegisterMessageCallback([&](const std::string&) {
+			if (++callbackCount == 1)
+			{
+				firstCallbackEntered.set_value();
+				// Block the workqueue so the remaining echoes queue up behind us
+				std::this_thread::sleep_for(std::chrono::milliseconds(400));
+			}
+		});
+		BOOST_REQUIRE(client.Connect("127.0.0.1", server.Port(), "/"));
+		for (int i = 0; i < 10; ++i)
+		{
+			client.SendMessage("m" + std::to_string(i));
+		}
+		auto enteredFuture = firstCallbackEntered.get_future();
+		BOOST_REQUIRE_MESSAGE(WaitFor(enteredFuture), "first callback executing");
+		// Give the remaining echoes time to arrive and queue behind the blocked callback
+		std::this_thread::sleep_for(std::chrono::milliseconds(200));
+		// Destructor runs here: waits for callback #1, discards the queued rest
+	}
+	BOOST_CHECK_EQUAL(callbackCount, 1);
+	std::this_thread::sleep_for(std::chrono::milliseconds(200));
+	BOOST_CHECK_MESSAGE(callbackCount == 1, "no queued callbacks ran after destruction");
+}
+
 BOOST_AUTO_TEST_CASE(ShutdownDuringDisconnectCallback, *utf::timeout(60))
 {
 	CEchoServer server;

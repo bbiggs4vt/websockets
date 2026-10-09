@@ -243,7 +243,9 @@ class CWebsocketServer
 	/// @param[in] name used for logging and naming threads
 	/// @param[in] settings server settings to use
 	CWebsocketServer(const std::string& name, const CServerSettings& settings);
-	/// Destructor. Stops the server (if started) and stops all IO/callback threads
+	/// Destructor. Stops the server (if started) and all callback/IO delivery: waits for a
+	/// callback already executing, discards undelivered events, and guarantees no callback
+	/// runs after it returns
 	~CWebsocketServer();
 
 	/// Starts the websocket server using all default values ("0.0.0.0", port 8080, no callbacks)
